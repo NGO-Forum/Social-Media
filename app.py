@@ -1,0 +1,541 @@
+from flask import Flask, render_template, request, render_template_string, redirect, url_for
+from werkzeug.utils import secure_filename
+import os, requests, json
+from dotenv import load_dotenv
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from googleapiclient.http import MediaFileUpload
+from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
+from datetime import datetime, timedelta
+from PIL import Image
+from apscheduler.schedulers.background import BackgroundScheduler
+
+# Fix for Pillow >= 10 / Python 3.13
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
+load_dotenv()  # Load tokens from .env
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+
+# --- Scheduler ---
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+
+SOCIAL_API = {
+    "twitter": {"bearer_token": "YOUR_TWITTER_BEARER_TOKEN"},
+
+    "facebook": {
+        "access_token": "YOUR_FB_PAGE_ACCESS_TOKEN",
+        "page_id": "YOUR_FB_PAGE_ID"
+    },
+
+    "instagram": {
+        "access_token": "YOUR_INSTAGRAM_ACCESS_TOKEN",
+        "instagram_id": "YOUR_INSTAGRAM_BUSINESS_ID"
+    },
+
+    "youtube": {"creds_file": "token.json"},
+
+    "linkedin": {
+        "client_id": "YOUR_CLIENT_ID",
+        "client_secret": "YOUR_CLIENT_SECRET",
+        "redirect_uri": "http://localhost:5000/linkedin/callback",
+        "tokens_file": "linkedin_tokens.json",
+        "organization_id": "YOUR_LINKEDIN_ORG_ID"
+    },
+
+    "tiktok": {
+        "access_token": "YOUR_TIKTOK_ACCESS_TOKEN",
+        "business_id": "YOUR_TIKTOK_BUSINESS_ID"
+    }
+}
+
+SCOPES_YOUTUBE = ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+# --- Slideshow creator ---
+def create_slideshow(image_paths, output_path, duration_per_image=2, music_path=None):
+    clips = [ImageClip(path).set_duration(duration_per_image).resize(height=720) for path in image_paths]
+    video = concatenate_videoclips(clips, method="compose")
+    if music_path and os.path.exists(music_path):
+        audio = AudioFileClip(music_path).volumex(0.2)
+        video = video.set_audio(audio)
+    video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
+    return output_path
+
+# --- Posting functions ---
+def post_twitter(title, desc):
+    """Post English text only to Twitter"""
+    text = f"{title}\n\n{desc}" if title else desc
+    if not text.strip():
+        print("❌ Twitter: empty text")
+        return False
+    resp = requests.post(
+        "https://api.twitter.com/2/tweets",
+        headers={
+            "Authorization": f"Bearer {SOCIAL_API['twitter']['bearer_token']}",
+            "Content-Type": "application/json"
+        },
+        json={"text": text}
+    )
+    if resp.status_code in [200, 201]:
+        print("✅ Twitter posted")
+        return True
+    else:
+        print(f"❌ Twitter failed: {resp.status_code}, {resp.text}")
+        return False
+    
+
+def post_facebook(title, desc, media_paths=None):
+    """
+    Post to Facebook Page. Supports text, multiple images, or a single video.
+    Uses a Page Access Token and Page endpoints only.
+    """
+    text = (title + "\n\n" if title else "") + (desc if desc else "")
+    page_id = SOCIAL_API['facebook']['page_id']
+    token = SOCIAL_API['facebook']['access_token']
+
+    try:
+        # Separate images and videos
+        images = []
+        video = None
+
+        if media_paths:
+            for path in media_paths:
+                if not os.path.exists(path):
+                    continue
+                ext = os.path.splitext(path)[1].lower()
+                if ext in ['.jpg', '.jpeg', '.png', '.gif']:
+                    images.append(path)
+                elif ext in ['.mp4', '.mov', '.avi', '.mkv'] and video is None:
+                    video = path  # Only one video allowed
+                else:
+                    print("Skipping unsupported file:", path)
+
+        # --- Handle multiple images ---
+        attached_media = []
+        for img in images:
+            with open(img, "rb") as f:
+                url = f"https://graph.facebook.com/v17.0/{page_id}/photos"
+                data = {"published": "false", "access_token": token}
+                files = {"source": f}
+                resp = requests.post(url, data=data, files=files)
+                if resp.status_code in [200, 201]:
+                    media_fbid = resp.json().get("id")
+                    attached_media.append({"media_fbid": media_fbid})
+                else:
+                    print("Failed to upload image:", resp.text)
+
+        # --- Create post for images ---
+        if attached_media:
+            post_url = f"https://graph.facebook.com/v17.0/{page_id}/feed"
+            post_data = {
+                "message": text,
+                "attached_media": attached_media,
+                "access_token": token
+            }
+            resp = requests.post(post_url, json=post_data)
+            print("Facebook image post response:", resp.status_code, resp.text)
+            if resp.status_code not in [200, 201]:
+                return False
+
+        # --- Handle single video ---
+        if video:
+            with open(video, "rb") as f:
+                url = f"https://graph.facebook.com/v17.0/{page_id}/videos"
+                data = {"description": text, "access_token": token}
+                files = {"source": f}
+                resp = requests.post(url, data=data, files=files)
+                print("Facebook video post response:", resp.status_code, resp.text)
+                if resp.status_code not in [200, 201]:
+                    return False
+
+        # If no media, post text only
+        if not images and not video:
+            url = f"https://graph.facebook.com/v17.0/{page_id}/feed"
+            data = {"message": text, "access_token": token}
+            resp = requests.post(url, data=data)
+            print("Facebook text post response:", resp.status_code, resp.text)
+            if resp.status_code not in [200, 201]:
+                return False
+
+        return True
+
+    except Exception as e:
+        print("Facebook post exception:", e)
+        return False
+
+
+def post_instagram(title, desc, media_path):
+    text = f"{title}\n\n{desc}" if title else desc
+    url = f"https://graph.facebook.com/v17.0/{SOCIAL_API['instagram']['instagram_id']}/media"
+    data = {"image_url": media_path, "caption": text, "access_token": SOCIAL_API['instagram']['access_token']}
+    resp = requests.post(url, data=data)
+    if resp.status_code != 200:
+        print("Instagram upload failed:", resp.text)
+        return False
+    creation_id = resp.json().get("id")
+    publish_url = f"https://graph.facebook.com/v17.0/{SOCIAL_API['instagram']['instagram_id']}/media_publish"
+    publish_resp = requests.post(publish_url, data={"creation_id": creation_id, "access_token": SOCIAL_API['instagram']['access_token']})
+    return publish_resp.status_code == 200
+
+def post_youtube(title, desc, media_path):
+    creds = Credentials.from_authorized_user_file(SOCIAL_API['youtube']['creds_file'], SCOPES_YOUTUBE)
+    youtube = build("youtube", "v3", credentials=creds)
+    media = MediaFileUpload(media_path, chunksize=-1, resumable=True)
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body={"snippet": {"title": title if title else (desc[:50] if desc else "Video"), "description": desc},
+              "status": {"privacyStatus": "public"}},
+        media_body=media
+    )
+    response = request.execute()
+    return "id" in response
+
+def post_tiktok(title, desc, media_path):
+    text = f"{title}\n\n{desc}" if title else desc
+    headers = {"Access-Token": SOCIAL_API['tiktok']['access_token']}
+    upload_url = "https://business-api.tiktokglobalshop.com/open_api/v1.3/media/upload/"
+    files = {"video_file": open(media_path, "rb")}
+    resp = requests.post(upload_url, files=files, headers=headers)
+    if resp.status_code != 200: return False
+    media_id = resp.json().get("data", {}).get("video_id")
+    post_url = "https://business-api.tiktokglobalshop.com/open_api/v1.3/post/create/"
+    post_resp = requests.post(post_url, json={"business_id": SOCIAL_API['tiktok']['business_id'], "video_id": media_id, "caption": text}, headers=headers)
+    return post_resp.status_code == 200
+
+
+# --- LinkedIn token handling ---
+def save_linkedin_tokens(tokens):
+    with open(SOCIAL_API['linkedin']['tokens_file'], "w") as f:
+        json.dump(tokens, f, indent=4)
+
+def load_linkedin_tokens():
+    path = SOCIAL_API['linkedin']['tokens_file']
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    return None
+
+def get_linkedin_access_token():
+    tokens = load_linkedin_tokens()
+    if not tokens:
+        return None
+
+    expires_at = datetime.fromisoformat(tokens["expires_at"])
+    if datetime.utcnow() >= expires_at:
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            print("❌ No refresh token — visit /linkedin/login first")
+            return None
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": SOCIAL_API['linkedin']['client_id'],
+            "client_secret": SOCIAL_API['linkedin']['client_secret']
+        }
+        r = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data)
+        if r.status_code != 200:
+            print("❌ Token refresh failed:", r.text)
+            return None
+        resp_data = r.json()
+        tokens["access_token"] = resp_data["access_token"]
+        tokens["expires_at"] = (datetime.utcnow() + timedelta(seconds=resp_data["expires_in"])).isoformat()
+        if "refresh_token" in resp_data:
+            tokens["refresh_token"] = resp_data["refresh_token"]
+        save_linkedin_tokens(tokens)
+    return tokens["access_token"]
+
+# --- Post LinkedIn org with title, description, 3 images ---
+def post_linkedin_org(title=None, description=None, image_paths=None):
+    access_token = get_linkedin_access_token()
+    if not access_token:
+        print("❌ No access token — visit /linkedin/login first")
+        return False
+
+    org_urn = f"urn:li:organization:{SOCIAL_API['linkedin']['organization_id']}"
+    text = ""
+    if title and description:
+        text = f"{title}\n\n{description}"
+    elif title:
+        text = title
+    elif description:
+        text = description
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "X-Restli-Protocol-Version": "2.0.0",
+        "Content-Type": "application/json"
+    }
+
+    # Upload images (up to 3)
+    assets = []
+    if image_paths:
+        for path in image_paths[:3]:
+            reg_resp = requests.post(
+                "https://api.linkedin.com/v2/assets?action=registerUpload",
+                headers=headers,
+                json={
+                    "registerUploadRequest": {
+                        "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
+                        "owner": org_urn,
+                        "serviceRelationships": [{"relationshipType": "OWNER", "identifier": "urn:li:userGeneratedContent"}]
+                    }
+                }
+            )
+            if reg_resp.status_code not in [200,201]:
+                print("❌ Register upload failed:", reg_resp.text)
+                return False
+
+            reg_data = reg_resp.json()
+            upload_url = reg_data['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl']
+            asset = reg_data['value']['asset']
+
+            with open(path, "rb") as f:
+                upload_resp = requests.put(upload_url, data=f, headers={"Authorization": f"Bearer {access_token}", "Content-Type": "image/jpeg"})
+            if upload_resp.status_code not in [200,201]:
+                print("❌ Upload failed:", upload_resp.text)
+                return False
+
+            assets.append({
+                "status": "READY",
+                "description": {"text": "Uploaded via API"},
+                "media": asset,
+                "title": {"text": os.path.basename(path)}
+            })
+
+    # Create the post
+    post_data = {
+        "author": org_urn,
+        "lifecycleState": "PUBLISHED",
+        "specificContent": {
+            "com.linkedin.ugc.ShareContent": {
+                "shareCommentary": {"text": text},
+                "shareMediaCategory": "IMAGE" if assets else "NONE",
+                "media": assets
+            }
+        },
+        "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"}
+    }
+
+    r = requests.post("https://api.linkedin.com/v2/ugcPosts", headers=headers, json=post_data)
+    if r.status_code in [200,201]:
+        print("✅ LinkedIn post created successfully!")
+        return True
+    else:
+        print("❌ Failed:", r.status_code, r.text)
+        return False
+
+# LinkedIn OAuth login
+@app.route("/linkedin/login")
+def linkedin_login():
+    client_id = SOCIAL_API['linkedin']['client_id']
+    redirect_uri = SOCIAL_API['linkedin']['redirect_uri']
+    scopes = "w_organization_social r_organization_social"
+    auth_url = (
+        "https://www.linkedin.com/oauth/v2/authorization"
+        f"?response_type=code&client_id={client_id}"
+        f"&redirect_uri={requests.utils.requote_uri(redirect_uri)}"
+        f"&scope={requests.utils.requote_uri(scopes)}"
+    )
+    return redirect(auth_url)
+
+@app.route("/linkedin/callback")
+def linkedin_callback():
+    code = request.args.get("code")
+    if not code:
+        return "No code received", 400
+
+    resp = requests.post(
+        "https://www.linkedin.com/oauth/v2/accessToken",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": SOCIAL_API['linkedin']['redirect_uri'],
+            "client_id": SOCIAL_API['linkedin']['client_id'],
+            "client_secret": SOCIAL_API['linkedin']['client_secret']
+        }
+    )
+    if resp.status_code != 200:
+        return f"Token exchange failed: {resp.text}", 400
+    data = resp.json()
+    tokens = {
+        "access_token": data["access_token"],
+        "expires_at": (datetime.utcnow() + timedelta(seconds=int(data["expires_in"]))).isoformat()
+    }
+    if "refresh_token" in data:
+        tokens["refresh_token"] = data["refresh_token"]
+    save_linkedin_tokens(tokens)
+    return "LinkedIn authorized successfully!"
+
+
+# --- Routes ---
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
+
+@app.route("/", methods=["POST"])
+def post_all():
+    selected_platforms = request.form.getlist("platforms")
+    title = request.form.get("title")
+    desc = request.form.get("desc")  # English
+    title_kh = request.form.get("title_kh")  # Khmer title
+    desc_kh = request.form.get("desc_kh")    # Khmer description
+    scheduled_time_str = request.form.get("scheduled_at")
+
+    media_files = request.files.getlist("media[]")
+    media_paths = []
+    for file in media_files:
+        filename = secure_filename(file.filename)
+        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(path)
+        media_paths.append(path)
+
+    
+    # --- Function to post to all selected platforms ---
+    def do_post():
+        Done, Failed = [], []
+
+        # Create slideshow for YouTube/TikTok if multiple images
+        slideshow_path = None
+        if len(media_paths) > 1 and any(p in selected_platforms for p in ["youtube", "tiktok"]):
+            slideshow_path = os.path.join(app.config['UPLOAD_FOLDER'], f"slideshow_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4")
+            try:
+                slideshow_path = create_slideshow(media_paths, slideshow_path)
+            except Exception as e:
+                print("❌ Failed to create slideshow:", e)
+                slideshow_path = None
+
+        # --- Facebook: use English + Khmer together ---
+        if "facebook" in selected_platforms:
+            fb_title = ""  # Facebook mainly uses description
+            fb_desc_parts = []
+
+            # Add Khmer first
+            if title_kh:
+                fb_desc_parts.append(title_kh)
+            if desc_kh:
+                fb_desc_parts.append(desc_kh)
+
+            # Add English after Khmer
+            if title:
+                fb_desc_parts.append(title)
+            if desc:
+                fb_desc_parts.append(desc)
+
+            fb_desc = "\n\n".join(fb_desc_parts)  # Join all parts with line breaks
+
+            success = post_facebook(fb_title, fb_desc, media_paths if media_paths else None)
+            if success:
+                Done.append("Facebook")
+            else:
+                Failed.append("Facebook")
+
+
+        for platform in selected_platforms:
+            if platform == "facebook":
+                continue
+            try:
+                success = False
+                if platform == "twitter":
+                    success = post_twitter(title, desc)
+                elif platform == "instagram":
+                    success = media_paths and post_instagram(title, desc, media_paths[0])
+                elif platform == "youtube":
+                    success = (slideshow_path or media_paths) and post_youtube(title, desc, slideshow_path or media_paths[0])
+                elif platform == "linkedin":
+                    success = media_paths and post_linkedin_org(title, desc, media_paths[:3])
+                elif platform == "tiktok":
+                    success = (slideshow_path or media_paths) and post_tiktok(title, desc, slideshow_path or media_paths[0])
+
+                if success:
+                    Done.append(platform.capitalize())
+                else:
+                    Failed.append(platform.capitalize())
+
+            except Exception as e:
+                print(f"❌ {platform} post failed:", e)
+                Failed.append(platform.capitalize())
+        return Done, Failed
+
+    # --- Check if scheduled ---
+    if scheduled_time_str:
+        scheduled_time = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
+        scheduler.add_job(lambda: do_post(), 'date', run_date=scheduled_time)
+        return render_template_string(f"""
+        <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <body><script>
+            Swal.fire({{
+                icon: 'success',
+                title: 'Scheduled!',
+                html: '✅ Your post is scheduled for: {scheduled_time.strftime("%Y-%m-%d %H:%M")}',
+                confirmButtonColor: '#22c55e'
+            }}).then(() => {{ window.location.href = '/'; }});
+        </script></body></html>
+        """)
+    
+    # Post immediately
+    Done, Failed = do_post()
+
+    # --- Return results (same as your current code) ---
+    if Done:
+        platforms_html = "<br>".join(Done)
+        return render_template_string("""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><meta charset="UTF-8"><title>Posting Result</title>
+        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <body><script>
+            Swal.fire({{
+                icon: 'success',
+                title: 'Posted Successfully!',
+                html: '✅ Posted to: {{ platforms_html|safe }}',
+                confirmButtonColor: '#28a745'
+            }}).then(() => {{ window.location.href = '/'; }});
+        </script></body></html>
+        """, platforms_html=platforms_html)
+    elif Failed:
+        platforms_html = "<br>".join(Failed)
+        return render_template_string("""
+        <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <body><script>
+            Swal.fire({{
+                icon: 'error',
+                title: 'Failed!',
+                html: '❌ Failed to post: {{ platforms_html|safe }}',
+                confirmButtonColor: '#dc3545'
+            }}).then(() => {{ window.location.href = '/'; }});
+        </script></body></html>
+        """, platforms_html=platforms_html)
+    else:
+        return render_template_string("""
+        <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <body><script>
+            Swal.fire({{
+                icon: 'warning',
+                title: 'No platforms selected!',
+                text: 'Please choose at least one platform to post to.',
+                confirmButtonColor: '#f39c12'
+            }}).then(() => {{ window.location.href = '/'; }});
+        </script></body></html>
+        """)
+
+    
+# ---------- Simple health route ----------
+@app.route("/status")
+def status():
+    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+
+if __name__ == "__main__":
+    # Ensure LinkedIn env variables exist (warn but still run)
+    if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
+        print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
+    app.run(host="0.0.0.0", port=5000, debug=True)

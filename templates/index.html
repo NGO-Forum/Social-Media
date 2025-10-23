@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media Posting</title>
+  <link rel="shortcut icon" href="{{ url_for('static', filename='image/logo.png') }}" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+</head>
+
+<body class="bg-gray-100 text-gray-800">
+
+  <!-- Header -->
+  <header class="flex bg-green-600 py-6 shadow-md">
+    <img src="{{ url_for('static', filename='image/NGO.png') }}" alt="NGO Forum Logo" class="mx-auto ml-16 w-48 h-auto">
+    <div class="container mx-auto px-4 mt-5 text-center">
+      <h1 class="text-4xl font-extrabold text-white">The NGO Forum on Cambodia Media Platform</h1>
+      <p class="text-green-100 mt-2">This platform allow you to post your messages to multiple media platforms at once -
+        just one click.</p>
+    </div>
+  </header>
+
+  <!-- Form + Preview Container -->
+  <main class="container mx-auto m-5 px-4">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      <!-- Left Card: Form -->
+      <div class="col-span-2 bg-white rounded-3xl shadow-xl p-6 md:p-8">
+        <h2 class="text-2xl font-bold mb-6 text-gray-700 text-center">Post to All Platforms</h2>
+        <form method="POST" enctype="multipart/form-data" class="space-y-6">
+
+          <!-- Hidden input for scheduled time -->
+          <input type="hidden" name="scheduled_at" id="scheduledAtHidden">
+
+          <!-- Platforms -->
+          <div>
+            <div class="flex justify-between">
+              <label class="block text-lg font-semibold ml-2 mb-3 text-gray-700">Select Platforms</label>
+              <span id="scheduleIcon"
+                class="flex items-center justify-center px-3 text-green-700 cursor-pointer hover:bg-green-100 rounded-lg">
+                <i class="fas fa-calendar-alt"></i>
+              </span>
+            </div>
+
+            <div>
+              <!-- Select All -->
+              <label class="flex items-center space-x-2 cursor-pointer mb-5 ml-2 mt-4">
+                <input id="selectAll" type="checkbox" class="form-checkbox h-5 w-5 text-gray-600">
+                <span class="font-medium">All Platforms</span>
+              </label>
+            </div>
+
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <label for="twitter" class="flex items-center space-x-2 cursor-pointer hover:bg-blue-50 rounded-lg p-2">
+                <input id="twitter" type="checkbox" name="platforms" value="twitter"
+                  class="form-checkbox h-5 w-5 text-blue-400">
+                <i class="fab fa-twitter text-blue-400"></i>
+                <span>Twitter</span>
+              </label>
+              <label for="facebook" class="flex items-center space-x-2 cursor-pointer hover:bg-blue-50 rounded-lg p-2">
+                <input id="facebook" type="checkbox" name="platforms" value="facebook"
+                  class="form-checkbox h-5 w-5 text-blue-600">
+                <i class="fab fa-facebook-f text-blue-600"></i>
+                <span>Facebook</span>
+              </label>
+              <label for="instagram" class="flex items-center space-x-2 cursor-pointer hover:bg-pink-50 rounded-lg p-2">
+                <input id="instagram" type="checkbox" name="platforms" value="instagram"
+                  class="form-checkbox h-5 w-5 text-pink-500">
+                <i class="fab fa-instagram text-pink-500"></i>
+                <span>Instagram</span>
+              </label>
+              <label for="youtube" class="flex items-center space-x-2 cursor-pointer hover:bg-red-50 rounded-lg p-2">
+                <input id="youtube" type="checkbox" name="platforms" value="youtube"
+                  class="form-checkbox h-5 w-5 text-red-600">
+                <i class="fab fa-youtube text-red-600"></i>
+                <span>YouTube</span>
+              </label>
+              <label for="tiktok" class="flex items-center space-x-2 cursor-pointer hover:bg-black/10 rounded-lg p-2">
+                <input id="tiktok" type="checkbox" name="platforms" value="tiktok"
+                  class="form-checkbox h-5 w-5 text-black">
+                <i class="fab fa-tiktok text-black"></i>
+                <span>TikTok</span>
+              </label>
+              <label for="linkedin" class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 rounded-lg p-2">
+                <input id="linkedin" type="checkbox" name="platforms" value="linkedin"
+                  class="form-checkbox h-5 w-5 text-blue-700">
+                <i class="fab fa-linkedin-in text-blue-700"></i>
+                <span>LinkedIn</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Media Upload -->
+          <div>
+            <label class="block text-lg font-semibold mb-2 text-gray-700">Upload Media <span class="text-sm">( image:
+                jpg, jpeg, png, gif or video: mp4, mov, avi, mkv )</span></label>
+            <input id="media" name="media[]" type="file" multiple accept="image/*,video/*"
+              class="border rounded-lg p-2 w-full cursor-pointer"
+              placeholder="image (jpg, jpeg, png, gif) or video files(mp4, mov, avi, mkv)">
+            <button type="button" id="addMore"
+              class="mt-2 px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700">+ Add More</button>
+          </div>
+
+          <!-- English Title -->
+          <div>
+            <label class="block text-lg font-semibold mb-2 text-gray-700">Title (English)</label>
+            <input type="text" name="title" id="titleInput"
+              class="w-full border rounded-lg p-3 focus:ring-2 focus:ring-green-400 focus:outline-none"
+              placeholder="Enter your title">
+          </div>
+
+          <!-- English Description -->
+          <div>
+            <label class="block text-lg font-semibold mb-2 text-gray-700">Description (English)</label>
+            <textarea name="desc" id="descInput"
+              class="w-full border rounded-lg p-3 h-40 resize-none focus:ring-2 focus:ring-green-400 focus:outline-none"
+              placeholder="Write your message..."></textarea>
+          </div>
+
+          <!-- Khmer Title (Hidden initially) -->
+          <div id="khmerTitleDiv" class="hidden">
+            <label class="block text-lg font-semibold mb-2 text-gray-700">Title (Khmer)</label>
+            <input type="text" name="title_kh" id="titleKhInput"
+              class="w-full border rounded-lg p-3 focus:ring-2 focus:ring-green-400 focus:outline-none"
+              placeholder="សរសេរឈ្មោះជាខ្មែរ">
+          </div>
+
+          <!-- Khmer Description (Hidden initially) -->
+          <div id="khmerDescDiv" class="hidden">
+            <label class="block text-lg font-semibold mb-2 text-gray-700">Description (Khmer)</label>
+            <textarea name="desc_kh" id="descKhInput"
+              class="w-full border rounded-lg p-3 h-40 resize-none focus:ring-2 focus:ring-green-400 focus:outline-none"
+              placeholder="សរសេរសារ​របស់​អ្នកជាខ្មែរ..."></textarea>
+          </div>
+
+          <!-- Submit Button -->
+          <div class="text-center pt-4">
+            <button type="submit"
+              class="bg-green-600 text-white px-8 py-3 rounded-xl font-semibold text-lg hover:bg-green-700 transition-all shadow-md hover:shadow-lg">
+              <i class="fas fa-upload mr-2"></i> Upload
+            </button>
+          </div>
+
+        </form>
+      </div>
+
+      <!-- Modal -->
+      <div id="scheduleModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-2xl shadow-xl w-96 p-6 relative">
+          <h3 class="text-xl font-bold mb-4 text-gray-700">Schedule Your Post</h3>
+
+          <label class="block text-gray-700 mb-2 font-semibold">Select Date & Time:</label>
+          <input type="datetime-local" id="scheduleInput"
+            class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-green-400 focus:outline-none mb-4">
+
+          <div class="flex justify-end space-x-3">
+            <button id="cancelSchedule"
+              class="px-4 py-2 rounded-lg bg-orange-300 hover:bg-orange-400 text-white font-semibold">Cancel</button>
+            <button id="saveSchedule"
+              class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold">Save</button>
+          </div>
+
+          <!-- Close button -->
+          <button id="closeModal"
+            class="absolute top-3 right-3 text-gray-500 hover:text-gray-700 font-bold text-lg">&times;</button>
+        </div>
+      </div>
+
+      <!-- Right Card: Preview -->
+      <div class="bg-white rounded-3xl shadow-xl p-6 md:p-8">
+        <h2 class="text-2xl font-bold mb-6 text-gray-700 text-center">Preview</h2>
+        <h3 class="font-semibold text-gray-600 mb-4">Media Preview:</h3>
+        <div id="mediaPreview" class="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4"></div>
+        <div class="mb-4">
+          <h3 class="font-semibold text-gray-600">Title (English):</h3>
+          <p id="titlePreview" class="text-gray-800"></p>
+        </div>
+        <div class="mb-4">
+          <h3 class="font-semibold text-gray-600">Description (English):</h3>
+          <p id="descPreview" class="text-gray-800 whitespace-pre-wrap"></p>
+        </div>
+
+        <!-- Khmer Preview (shown only if Facebook is selected) -->
+        <div id="khmerPreviewDiv" class="hidden mb-4">
+          <div class="mb-4">
+            <h3 class="font-semibold text-gray-600">Title (Khmer):</h3>
+            <p id="titleKhPreview" class="text-gray-800" style="font-family: 'Noto Sans Khmer', Arial, sans-serif;"></p>
+          </div>
+          <div class="mb-4">
+            <h3 class="font-semibold text-gray-600">Description (Khmer):</h3>
+            <p id="descKhPreview" class="text-gray-800 ​whitespace-pre-wrap"
+              style="font-family: 'Noto Sans Khmer', Arial, sans-serif;"></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    // --- Elements ---
+    const mediaInput = document.getElementById('media');
+    const mediaPreview = document.getElementById('mediaPreview');
+    const addMoreBtn = document.getElementById('addMore');
+    const titleInput = document.getElementById('titleInput');
+    const descInput = document.getElementById('descInput');
+    const titlePreview = document.getElementById('titlePreview');
+    const descPreview = document.getElementById('descPreview');
+    const titleKhInput = document.getElementById('titleKhInput');
+    const descKhInput = document.getElementById('descKhInput');
+    const titleKhPreview = document.getElementById('titleKhPreview');
+    const descKhPreview = document.getElementById('descKhPreview');
+    const khmerPreviewDiv = document.getElementById('khmerPreviewDiv');
+
+    const selectAllCheckbox = document.getElementById('selectAll');
+    const platformCheckboxes = document.querySelectorAll('input[name="platforms"]');
+    const facebookCheckbox = document.getElementById('facebook');
+
+    let filesArray = [];
+
+    // --- Media Preview & Remove ---
+    function updatePreview() {
+      // English preview
+      titlePreview.textContent = titleInput.value;
+      descPreview.textContent = descInput.value;
+
+      // Khmer preview
+      if (facebookCheckbox.checked) {
+        khmerPreviewDiv.classList.remove('hidden');
+        titleKhPreview.textContent = titleKhInput.value;
+        descKhPreview.textContent = descKhInput.value;
+      } else {
+        khmerPreviewDiv.classList.add('hidden');
+      }
+
+      // Media preview
+      mediaPreview.innerHTML = '';
+      filesArray.forEach((file, idx) => {
+        const container = document.createElement('div');
+        container.className = 'relative';
+
+        if (file.type.startsWith('image')) {
+          const img = document.createElement('img');
+          img.src = URL.createObjectURL(file);
+          img.className = 'w-full h-full object-cover rounded-lg';
+          container.appendChild(img);
+        } else if (file.type.startsWith('video')) {
+          const video = document.createElement('video');
+          video.src = URL.createObjectURL(file);
+          video.className = 'w-full h-full object-cover rounded-lg';
+          video.controls = true;
+          container.appendChild(video);
+        }
+
+        // Remove button
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.innerHTML = '&times;';
+        removeBtn.className = 'absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm';
+        removeBtn.onclick = () => {
+          filesArray.splice(idx, 1);
+          updateInputFiles();
+          updatePreview();
+        };
+        container.appendChild(removeBtn);
+
+        mediaPreview.appendChild(container);
+      });
+    }
+
+    function updateInputFiles() {
+      const dataTransfer = new DataTransfer();
+      filesArray.forEach(f => dataTransfer.items.add(f));
+      mediaInput.files = dataTransfer.files;
+    }
+
+    mediaInput.addEventListener('change', (e) => {
+      filesArray = filesArray.concat(Array.from(e.target.files));
+      updateInputFiles();
+      updatePreview();
+    });
+
+    addMoreBtn.addEventListener('click', () => mediaInput.click());
+
+    titleInput.addEventListener('input', updatePreview);
+    descInput.addEventListener('input', updatePreview);
+    titleKhInput.addEventListener('input', updatePreview);
+    descKhInput.addEventListener('input', updatePreview);
+
+    // --- Platform Selection ---
+    selectAllCheckbox.addEventListener('change', () => {
+      platformCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+      toggleKhmerFields();
+    });
+
+    platformCheckboxes.forEach(cb => {
+      cb.addEventListener('change', toggleKhmerFields);
+    });
+
+    // --- Show/hide Khmer inputs for Facebook ---
+    const khmerTitleDiv = document.getElementById('khmerTitleDiv');
+    const khmerDescDiv = document.getElementById('khmerDescDiv');
+
+    function toggleKhmerFields() {
+      if (facebookCheckbox.checked) {
+        khmerTitleDiv.classList.remove('hidden');
+        khmerDescDiv.classList.remove('hidden');
+      } else {
+        khmerTitleDiv.classList.add('hidden');
+        khmerDescDiv.classList.add('hidden');
+      }
+      updatePreview();
+    }
+
+    // --- Scheduling Modal ---
+    const scheduleIcon = document.getElementById('scheduleIcon');
+    const scheduleModal = document.getElementById('scheduleModal');
+    const closeModal = document.getElementById('closeModal');
+    const cancelSchedule = document.getElementById('cancelSchedule');
+    const saveSchedule = document.getElementById('saveSchedule');
+    const scheduleInput = document.getElementById('scheduleInput');
+    const scheduledAtHidden = document.getElementById('scheduledAtHidden');
+
+    // Open modal
+    scheduleIcon.addEventListener('click', () => {
+      scheduleModal.classList.remove('hidden');
+    });
+
+    // Close modal
+    closeModal.addEventListener('click', () => {
+      scheduleModal.classList.add('hidden');
+    });
+
+    cancelSchedule.addEventListener('click', () => {
+      scheduleModal.classList.add('hidden');
+    });
+
+    // Save scheduled time
+    saveSchedule.addEventListener('click', () => {
+      if (scheduleInput.value) {
+        scheduledAtHidden.value = scheduleInput.value;
+        const date = new Date(scheduleInput.value);
+        Swal.fire({
+          icon: 'success',
+          title: 'Scheduled!',
+          text: `Your post is scheduled for: ${date.toLocaleString()}`,
+          confirmButtonColor: '#22c55e'
+        });
+        scheduleModal.classList.add('hidden');
+      } else {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Oops!',
+          text: "Please select a date and time!",
+          confirmButtonColor: '#22c55e'
+        });
+      }
+    });
+
+    // Initialize
+    toggleKhmerFields();
+
+  </script>
+</body>
+
+</html>
