@@ -1,5 +1,6 @@
-from flask import Flask, render_template, request, render_template_string, redirect, url_for
+from flask import Flask, render_template, request, render_template_string, redirect, url_for, session
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 import os, requests, json
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
@@ -17,6 +18,7 @@ if not hasattr(Image, "ANTIALIAS"):
 load_dotenv()  # Load tokens from .env
 
 app = Flask(__name__)
+app.secret_key = "mengseu@NGOF2025"
 
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -27,37 +29,75 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 scheduler = BackgroundScheduler()
 scheduler.start()
 
+# --- User credentials from environment variables ---
+USERS = {}
+for i in range(1, 10):  # supports up to 9 users, change if needed
+    email = os.getenv(f"USER_{i}_EMAIL")
+    password = os.getenv(f"USER_{i}_PASSWORD")
+    if email and password:
+        USERS[email] = generate_password_hash(password)
+
 
 SOCIAL_API = {
-    "twitter": {"bearer_token": "YOUR_TWITTER_BEARER_TOKEN"},
-
+    "twitter": {
+        "bearer_token": os.getenv("TWITTER_BEARER_TOKEN")
+    },
     "facebook": {
-        "access_token": "YOUR_FB_PAGE_ACCESS_TOKEN",
-        "page_id": "YOUR_FB_PAGE_ID"
+        "access_token": os.getenv("FB_PAGE_ACCESS_TOKEN"),
+        "page_id": os.getenv("FB_PAGE_ID")
     },
-
     "instagram": {
-        "access_token": "YOUR_INSTAGRAM_ACCESS_TOKEN",
-        "instagram_id": "YOUR_INSTAGRAM_BUSINESS_ID"
+        "access_token": os.getenv("INSTAGRAM_ACCESS_TOKEN"),
+        "instagram_id": os.getenv("INSTAGRAM_BUSINESS_ID")
     },
-
-    "youtube": {"creds_file": "token.json"},
-
+    "youtube": {
+        "creds_file": "token.json"  # Keep as is if using YouTube OAuth
+    },
     "linkedin": {
-        "client_id": "YOUR_CLIENT_ID",
-        "client_secret": "YOUR_CLIENT_SECRET",
-        "redirect_uri": "http://localhost:5000/linkedin/callback",
-        "tokens_file": "linkedin_tokens.json",
-        "organization_id": "YOUR_LINKEDIN_ORG_ID"
+        "client_id": os.getenv("LINKEDIN_CLIENT_ID"),
+        "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET"),
+        "redirect_uri": os.getenv("LINKEDIN_REDIRECT_URI"),
+        "tokens_file": "linkedin_tokens.json",  # local file for token storage
+        "organization_id": os.getenv("LINKEDIN_PERSON_ID")  # or ORG_ID if posting as company
     },
-
     "tiktok": {
-        "access_token": "YOUR_TIKTOK_ACCESS_TOKEN",
-        "business_id": "YOUR_TIKTOK_BUSINESS_ID"
+        "access_token": os.getenv("TIKTOK_ACCESS_TOKEN"),
+        "business_id": os.getenv("TIKTOK_BUSINESS_ID")
     }
 }
 
 SCOPES_YOUTUBE = ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+# --- Helper functions for login ---
+def login_required(func):
+    """Decorator to protect routes"""
+    from functools import wraps
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if "user" not in session:
+            return redirect(url_for("login"))
+        return func(*args, **kwargs)
+    return wrapper
+
+# --- Routes for authentication ---
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form["email"]
+        password = request.form["password"]
+        if email in USERS and check_password_hash(USERS[email], password):
+            session["user"] = email
+            return redirect(url_for("index"))
+        else:
+            return render_template("login.html", error="Invalid email or password")
+    return render_template("login.html")
+
+@app.route("/logout")
+@login_required
+def logout():
+    session.pop("user", None)
+    return redirect(url_for("login"))
 
 
 # --- Slideshow creator ---
@@ -378,10 +418,12 @@ def linkedin_callback():
 
 # --- Routes ---
 @app.route("/", methods=["GET"])
+@login_required
 def index():
     return render_template("index.html")
 
 @app.route("/", methods=["POST"])
+@login_required
 def post_all():
     selected_platforms = request.form.getlist("platforms")
     title = request.form.get("title")
@@ -447,11 +489,11 @@ def post_all():
                 if platform == "twitter":
                     success = post_twitter(title, desc)
                 elif platform == "instagram":
-                    success = media_paths and post_instagram(title, desc, media_paths[0])
+                    success = media_paths and post_instagram(title, desc, media_paths[:3])
                 elif platform == "youtube":
                     success = (slideshow_path or media_paths) and post_youtube(title, desc, slideshow_path or media_paths[0])
                 elif platform == "linkedin":
-                    success = media_paths and post_linkedin_org(title, desc, media_paths[:3])
+                    success = media_paths and post_linkedin_org(title, desc, media_paths[:2])
                 elif platform == "tiktok":
                     success = (slideshow_path or media_paths) and post_tiktok(title, desc, slideshow_path or media_paths[0])
 
@@ -538,4 +580,4 @@ if __name__ == "__main__":
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=True)
