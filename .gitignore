@@ -6,3 +6,4 @@ token.json
 API/client_secret_*.json
 .env
 uploads/
+linkedin_tokens.json

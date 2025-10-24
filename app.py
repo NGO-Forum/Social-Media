@@ -7,7 +7,7 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -24,6 +24,8 @@ UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+
+now = datetime.now(timezone.utc)
 
 # --- Scheduler ---
 scheduler = BackgroundScheduler()
@@ -267,14 +269,17 @@ def load_linkedin_tokens():
 def get_linkedin_access_token():
     tokens = load_linkedin_tokens()
     if not tokens:
+        print("❌ No LinkedIn tokens found. Please login via /linkedin/login")
         return None
 
     expires_at = datetime.fromisoformat(tokens["expires_at"])
-    if datetime.utcnow() >= expires_at:
+    if datetime.now(timezone.utc) >= expires_at:
+        # Access token expired, try refresh
         refresh_token = tokens.get("refresh_token")
         if not refresh_token:
-            print("❌ No refresh token — visit /linkedin/login first")
+            print("❌ No refresh token, reauthorize via /linkedin/login")
             return None
+
         data = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
@@ -283,15 +288,53 @@ def get_linkedin_access_token():
         }
         r = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data)
         if r.status_code != 200:
-            print("❌ Token refresh failed:", r.text)
+            print("❌ Failed to refresh LinkedIn token:", r.text)
             return None
+
         resp_data = r.json()
         tokens["access_token"] = resp_data["access_token"]
-        tokens["expires_at"] = (datetime.utcnow() + timedelta(seconds=resp_data["expires_in"])).isoformat()
+        tokens["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=resp_data["expires_in"])).isoformat()
         if "refresh_token" in resp_data:
             tokens["refresh_token"] = resp_data["refresh_token"]
         save_linkedin_tokens(tokens)
+        print("✅ LinkedIn token refreshed successfully")
+
     return tokens["access_token"]
+
+def refresh_linkedin_token():
+    tokens = load_linkedin_tokens()
+    if not tokens:
+        print("❌ No LinkedIn tokens to refresh")
+        return
+
+    expires_at = datetime.fromisoformat(tokens["expires_at"])
+    # Refresh 1 hour before expiry
+    if datetime.now(timezone.utc) + timedelta(hours=1) >= expires_at:
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            print("❌ No refresh token, user needs to login again via /linkedin/login")
+            return
+
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": SOCIAL_API['linkedin']['client_id'],
+            "client_secret": SOCIAL_API['linkedin']['client_secret']
+        }
+        r = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data)
+        if r.status_code == 200:
+            resp_data = r.json()
+            tokens["access_token"] = resp_data["access_token"]
+            tokens["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=resp_data["expires_in"])).isoformat()
+            if "refresh_token" in resp_data:
+                tokens["refresh_token"] = resp_data["refresh_token"]
+            save_linkedin_tokens(tokens)
+            print("✅ LinkedIn token refreshed automatically")
+        else:
+            print("❌ Failed to refresh LinkedIn token:", r.text)
+
+# Schedule LinkedIn token refresh every 30 minutes
+scheduler.add_job(refresh_linkedin_token, 'interval', minutes=30)
 
 # --- Post LinkedIn org with title, description, 3 images ---
 def post_linkedin_org(title=None, description=None, image_paths=None):
@@ -408,7 +451,7 @@ def linkedin_callback():
     data = resp.json()
     tokens = {
         "access_token": data["access_token"],
-        "expires_at": (datetime.utcnow() + timedelta(seconds=int(data["expires_in"]))).isoformat()
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(data["expires_in"]))).isoformat()
     }
     if "refresh_token" in data:
         tokens["refresh_token"] = data["refresh_token"]
@@ -493,7 +536,7 @@ def post_all():
                 elif platform == "youtube":
                     success = (slideshow_path or media_paths) and post_youtube(title, desc, slideshow_path or media_paths[0])
                 elif platform == "linkedin":
-                    success = media_paths and post_linkedin_org(title, desc, media_paths[:2])
+                    success = media_paths and post_linkedin_org(title, desc, media_paths[:3])
                 elif platform == "tiktok":
                     success = (slideshow_path or media_paths) and post_tiktok(title, desc, slideshow_path or media_paths[0])
 
@@ -511,22 +554,29 @@ def post_all():
     if scheduled_time_str:
         scheduled_time = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
         scheduler.add_job(lambda: do_post(), 'date', run_date=scheduled_time)
-        return render_template_string(f"""
-        <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
-        <body><script>
-            Swal.fire({{
-                icon: 'success',
-                title: 'Scheduled!',
-                html: '✅ Your post is scheduled for: {scheduled_time.strftime("%Y-%m-%d %H:%M")}',
-                confirmButtonColor: '#22c55e'
-            }}).then(() => {{ window.location.href = '/'; }});
-        </script></body></html>
-        """)
+        return render_template_string("""
+        <html>
+        <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <body>
+            <script>
+            {% raw %}
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Scheduled!',
+                    html: '✅ Your post is scheduled for: {% endraw %}{{ scheduled_time }}{% raw %}',
+                    confirmButtonColor: '#22c55e'
+                }).then(()=>{window.location.href='/'});
+            {% endraw %}
+            </script>
+        </body>
+        </html>
+        """, scheduled_time=scheduled_time.strftime("%Y-%m-%d %H:%M"))
+
     
     # Post immediately
     Done, Failed = do_post()
 
-    # --- Return results (same as your current code) ---
+    # --- Return results (fixed Jinja + JS) ---
     if Done:
         platforms_html = "<br>".join(Done)
         return render_template_string("""
@@ -534,50 +584,67 @@ def post_all():
         <html lang="en">
         <head><meta charset="UTF-8"><title>Posting Result</title>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
-        <body><script>
-            Swal.fire({{
+        <body>
+        <script>
+        {% raw %}
+            Swal.fire({
                 icon: 'success',
                 title: 'Posted Successfully!',
-                html: '✅ Posted to: {{ platforms_html|safe }}',
+                html: '{% endraw %}{{ platforms_html|safe }}{% raw %}',
                 confirmButtonColor: '#28a745'
-            }}).then(() => {{ window.location.href = '/'; }});
-        </script></body></html>
+            }).then(() => { window.location.href = '/'; });
+        {% endraw %}
+        </script>
+        </body>
+        </html>
         """, platforms_html=platforms_html)
+
     elif Failed:
         platforms_html = "<br>".join(Failed)
         return render_template_string("""
         <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
-        <body><script>
-            Swal.fire({{
+        <body>
+        <script>
+        {% raw %}
+            Swal.fire({
                 icon: 'error',
                 title: 'Failed!',
-                html: '❌ Failed to post: {{ platforms_html|safe }}',
+                html: '❌ Failed to post: {% endraw %}{{ platforms_html|safe }}{% raw %}',
                 confirmButtonColor: '#dc3545'
-            }}).then(() => {{ window.location.href = '/'; }});
-        </script></body></html>
+            }).then(() => { window.location.href = '/'; });
+        {% endraw %}
+        </script>
+        </body>
+        </html>
         """, platforms_html=platforms_html)
+
     else:
         return render_template_string("""
         <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
-        <body><script>
-            Swal.fire({{
+        <body>
+        <script>
+        {% raw %}
+            Swal.fire({
                 icon: 'warning',
                 title: 'No platforms selected!',
                 text: 'Please choose at least one platform to post to.',
                 confirmButtonColor: '#f39c12'
-            }}).then(() => {{ window.location.href = '/'; }});
-        </script></body></html>
+            }).then(() => { window.location.href = '/'; });
+        {% endraw %}
+        </script>
+        </body>
+        </html>
         """)
 
     
 # ---------- Simple health route ----------
 @app.route("/status")
 def status():
-    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
 
 
 if __name__ == "__main__":
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
