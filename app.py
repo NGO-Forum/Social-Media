@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, render_template_string, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-import os, requests, json
+import os, requests, json, tweepy
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -42,7 +42,10 @@ for i in range(1, 10):  # supports up to 9 users, change if needed
 
 SOCIAL_API = {
     "twitter": {
-        "bearer_token": os.getenv("TWITTER_BEARER_TOKEN")
+        "api_key": os.getenv("TWITTER_API_KEY"),
+        "api_secret": os.getenv("TWITTER_API_SECRET_KEY"),
+        "access_token": os.getenv("TWITTER_ACCESS_TOKEN"),
+        "access_secret": os.getenv("TWITTER_ACCESS_TOKEN_SECRET")
     },
     "facebook": {
         "access_token": os.getenv("FB_PAGE_ACCESS_TOKEN"),
@@ -63,8 +66,11 @@ SOCIAL_API = {
         "organization_id": os.getenv("LINKEDIN_PERSON_ID")  # or ORG_ID if posting as company
     },
     "tiktok": {
-        "access_token": os.getenv("TIKTOK_ACCESS_TOKEN"),
-        "business_id": os.getenv("TIKTOK_BUSINESS_ID")
+        "client_key": os.getenv("TIKTOK_CLIENT_KEY"),       # Your App ID
+        "client_secret": os.getenv("TIKTOK_CLIENT_SECRET"), # Your App Secret
+        "redirect_uri": os.getenv("TIKTOK_REDIRECT_URI"),   # OAuth redirect URI
+        "business_id": os.getenv("TIKTOK_BUSINESS_ID"),     # TikTok business account ID
+        "tokens_file": "tiktok_tokens.json" 
     }
 }
 
@@ -114,24 +120,25 @@ def create_slideshow(image_paths, output_path, duration_per_image=2, music_path=
 
 # --- Posting functions ---
 def post_twitter(title, desc):
-    """Post English text only to Twitter"""
+    api_key = SOCIAL_API['twitter']['api_key']
+    api_secret = SOCIAL_API['twitter']['api_secret']
+    access_token = SOCIAL_API['twitter']['access_token']
+    access_secret = SOCIAL_API['twitter']['access_secret']
+
+    auth = tweepy.OAuth1UserHandler(api_key, api_secret, access_token, access_secret)
+    api = tweepy.API(auth)
+
     text = f"{title}\n\n{desc}" if title else desc
     if not text.strip():
         print("❌ Twitter: empty text")
         return False
-    resp = requests.post(
-        "https://api.twitter.com/2/tweets",
-        headers={
-            "Authorization": f"Bearer {SOCIAL_API['twitter']['bearer_token']}",
-            "Content-Type": "application/json"
-        },
-        json={"text": text}
-    )
-    if resp.status_code in [200, 201]:
+
+    try:
+        api.update_status(text)
         print("✅ Twitter posted")
         return True
-    else:
-        print(f"❌ Twitter failed: {resp.status_code}, {resp.text}")
+    except Exception as e:
+        print("❌ Twitter failed:", e)
         return False
     
 
@@ -252,6 +259,93 @@ def post_tiktok(title, desc, media_path):
     post_url = "https://business-api.tiktokglobalshop.com/open_api/v1.3/post/create/"
     post_resp = requests.post(post_url, json={"business_id": SOCIAL_API['tiktok']['business_id'], "video_id": media_id, "caption": text}, headers=headers)
     return post_resp.status_code == 200
+
+
+# --- Token helpers ---
+def save_tiktok_tokens(tokens):
+    with open(SOCIAL_API["tiktok"]["tokens_file"], "w") as f:
+        json.dump(tokens, f, indent=4)
+
+def load_tiktok_tokens():
+    path = SOCIAL_API["tiktok"]["tokens_file"]
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    return None
+
+def get_tiktok_access_token():
+    tokens = load_tiktok_tokens()
+    if not tokens:
+        print("❌ No TikTok token found. Please login via /tiktok/login")
+        return None
+
+    expires_at = datetime.fromisoformat(tokens["expires_at"])
+    if datetime.now(timezone.utc) >= expires_at:
+        # Refresh token
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            print("❌ No refresh token. Reauthorize via /tiktok/login")
+            return None
+
+        data = {
+            "client_key": SOCIAL_API["tiktok"]["client_key"],
+            "client_secret": SOCIAL_API["tiktok"]["client_secret"],
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token
+        }
+        r = requests.post("https://business-api.tiktokglobalshop.com/open_api/v1.3/oauth/refresh_token/", json=data)
+        if r.status_code != 200:
+            print("❌ Failed to refresh TikTok token:", r.text)
+            return None
+
+        resp_data = r.json().get("data", {})
+        tokens["access_token"] = resp_data["access_token"]
+        tokens["refresh_token"] = resp_data["refresh_token"]
+        tokens["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=int(resp_data["expires_in"]))).isoformat()
+        save_tiktok_tokens(tokens)
+        print("✅ TikTok token refreshed automatically")
+
+    return tokens["access_token"]
+
+
+# --- OAuth login ---
+@app.route("/tiktok/login")
+def tiktok_login():
+    client_key = SOCIAL_API["tiktok"]["client_key"]
+    redirect_uri = SOCIAL_API["tiktok"]["redirect_uri"]
+    scopes = "video.create video.list user.info.basic"
+    auth_url = (
+        f"https://business-api.tiktokglobalshop.com/open_api/v1.3/oauth/authorize/"
+        f"?client_key={client_key}&response_type=code&scope={scopes}&redirect_uri={redirect_uri}"
+    )
+    return redirect(auth_url)
+
+@app.route("/tiktok/callback")
+def tiktok_callback():
+    code = request.args.get("code")
+    if not code:
+        return "No code received", 400
+
+    data = {
+        "client_key": SOCIAL_API["tiktok"]["client_key"],
+        "client_secret": SOCIAL_API["tiktok"]["client_secret"],
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": SOCIAL_API["tiktok"]["redirect_uri"]
+    }
+    r = requests.post("https://business-api.tiktokglobalshop.com/open_api/v1.3/oauth/token/", json=data)
+    if r.status_code != 200:
+        return f"Token exchange failed: {r.text}", 400
+
+    resp_data = r.json().get("data", {})
+    tokens = {
+        "access_token": resp_data["access_token"],
+        "refresh_token": resp_data.get("refresh_token"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(resp_data["expires_in"]))).isoformat()
+    }
+    save_tiktok_tokens(tokens)
+    return "TikTok authorized successfully!"
+
 
 
 # --- LinkedIn token handling ---
