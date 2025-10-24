@@ -1,6 +1,4 @@
 shadow.py
-*.pyc
-*.png
 *.txt
 token.json
 API/client_secret_*.json
