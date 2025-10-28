@@ -10,6 +10,8 @@ from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
 from datetime import datetime, timedelta, timezone
 from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
+from flask_sqlalchemy import SQLAlchemy
+from flask import send_from_directory
 
 # Fix for Pillow >= 10 / Python 3.13
 if not hasattr(Image, "ANTIALIAS"):
@@ -18,7 +20,14 @@ if not hasattr(Image, "ANTIALIAS"):
 load_dotenv()  # Load tokens from .env
 
 app = Flask(__name__)
-app.secret_key = "mengseu@NGOF2025"
+app.secret_key = "@Riti#NGOF2025"
+
+
+# MySQL connection
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/media'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
 
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -30,6 +39,19 @@ now = datetime.now(timezone.utc)
 # --- Scheduler ---
 scheduler = BackgroundScheduler()
 scheduler.start()
+
+
+# Post model
+class Post(db.Model):
+    __tablename__ = 'posts'  # explicitly use your actual table name
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(500), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    images = db.Column(db.Text, nullable=True)  # comma-separated paths
+    scheduled_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=True)
+    posted = db.Column(db.Boolean, default=False)
+
 
 # --- User credentials from environment variables ---
 USERS = {}
@@ -142,6 +164,7 @@ def post_twitter(title, desc):
         return False
     
 
+#--- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths=None):
     """
     Post to Facebook Page. Supports text, multiple images, or a single video.
@@ -222,7 +245,8 @@ def post_facebook(title, desc, media_paths=None):
         return False
 
 
-def post_instagram(title, desc, media_path):
+#--- Instagram posting (single image) ---
+def post_instagram(title, desc, media_path=None):
     text = f"{title}\n\n{desc}" if title else desc
     url = f"https://graph.facebook.com/v17.0/{SOCIAL_API['instagram']['instagram_id']}/media"
     data = {"image_url": media_path, "caption": text, "access_token": SOCIAL_API['instagram']['access_token']}
@@ -235,6 +259,8 @@ def post_instagram(title, desc, media_path):
     publish_resp = requests.post(publish_url, data={"creation_id": creation_id, "access_token": SOCIAL_API['instagram']['access_token']})
     return publish_resp.status_code == 200
 
+
+#--- YouTube posting ---
 def post_youtube(title, desc, media_path):
     creds = Credentials.from_authorized_user_file(SOCIAL_API['youtube']['creds_file'], SCOPES_YOUTUBE)
     youtube = build("youtube", "v3", credentials=creds)
@@ -248,6 +274,8 @@ def post_youtube(title, desc, media_path):
     response = request.execute()
     return "id" in response
 
+
+#--- TikTok posting ---
 def post_tiktok(title, desc, media_path):
     text = f"{title}\n\n{desc}" if title else desc
     headers = {"Access-Token": SOCIAL_API['tiktok']['access_token']}
@@ -577,9 +605,24 @@ def post_all():
         file.save(path)
         media_paths.append(path)
 
+    # --- Save post to database ---
+    images_str = ",".join(media_paths) if media_paths else None
+    scheduled_at = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M") if scheduled_time_str else None
+
+    new_post = Post(
+        title=title,
+        description=desc,
+        images=images_str,
+        scheduled_at=scheduled_at
+    )
+
+    db.session.add(new_post)
+    db.session.commit()
+
+
     
     # --- Function to post to all selected platforms ---
-    def do_post():
+    def do_post(post_obj):
         Done, Failed = [], []
 
         # Create slideshow for YouTube/TikTok if multiple images
@@ -642,12 +685,16 @@ def post_all():
             except Exception as e:
                 print(f"❌ {platform} post failed:", e)
                 Failed.append(platform.capitalize())
+        
+        # --- Mark post as posted ---
+        post_obj.posted = True
+        db.session.commit()
         return Done, Failed
 
     # --- Check if scheduled ---
     if scheduled_time_str:
         scheduled_time = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
-        scheduler.add_job(lambda: do_post(), 'date', run_date=scheduled_time)
+        scheduler.add_job(lambda: do_post(new_post), 'date', run_date=scheduled_time)
         return render_template_string("""
         <html>
         <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
@@ -668,7 +715,7 @@ def post_all():
 
     
     # Post immediately
-    Done, Failed = do_post()
+    Done, Failed = do_post(new_post)
 
     # --- Return results (fixed Jinja + JS) ---
     if Done:
@@ -735,6 +782,24 @@ def post_all():
 @app.route("/status")
 def status():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+
+@app.template_filter('basename')
+def basename_filter(path):
+    import os
+    return os.path.basename(path)
+
+
+@app.route('/uploads/<filename>')
+@login_required
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+
+@app.route("/posts")
+@login_required
+def show_posts():
+    posts = Post.query.order_by(Post.created_at.desc()).all()  # latest first
+    return render_template("posts.html", posts=posts)
 
 
 if __name__ == "__main__":

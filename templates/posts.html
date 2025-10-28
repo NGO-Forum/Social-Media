@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Platforms</title>
+    <link rel="shortcut icon" href="{{ url_for('static', filename='image/logo.png') }}" type="image/png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="stylesheet" href="../static/css/styles.css">
+
+</head>
+
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- Header -->
+    <header class="bg-green-600 p-6 shadow-md">
+        <div
+            class="container mx-auto px-4 md:px-8 lg:px-20 grid grid-cols-1 md:grid-cols-5 items-center gap-4 md:gap-6">
+
+            <!-- Logo -->
+            <div class="flex justify-center md:justify-start mb-4 md:mb-0">
+                <img src="{{ url_for('static', filename='image/NGO.png') }}" alt="NGO Forum Logo"
+                    class="w-24 sm:w-32 md:w-40 lg:w-48 h-auto">
+            </div>
+
+            <!-- Text Content -->
+            <div class="md:col-span-4 text-center">
+                <h1 class="text-lg sm:text-xl md:text-2xl lg:text-3xl font-extrabold text-white leading-snug">
+                    The NGO Forum on Cambodia Media Platform
+                </h1>
+                <p class="text-green-100 mt-2 text-sm sm:text-base md:text-lg">
+                    Post messages to multiple media platforms at once with a single click.
+                </p>
+            </div>
+
+        </div>
+    </header>
+
+    <nav>
+        <div class="bg-white shadow-md">
+            <div class="container mx-auto px-4 md:px-12 lg:px-20">
+                <ul class="flex space-x-4 md:space-x-6 lg:space-x-8 py-3">
+                    <li>
+                        <a href="{{ url_for('index') }}"
+                            class="text-gray-700 hover:text-green-600 font-semibold {% if request.endpoint == 'index' %}border-b-2 border-green-600{% endif %}">Home</a>
+                    </li>
+                    <li>
+                        <a href="{{ url_for('show_posts') }}"
+                            class="text-gray-700 hover:text-green-600 font-semibold {% if request.endpoint == 'show_posts' %}border-b-2 border-green-600{% endif %}">All
+                            Posts</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+
+    <h1 class="text-2xl text-green-600 font-bold ml-6 mt-6">All Posts</h1>
+    <main class="container mx-auto px-6 py-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6 max-h-[73vh] h-auto 
+            overflow-x-hidden overflow-y-auto 
+            scrollbar-thin scrollbar-thumb-green-600 scrollbar-track-gray-200 
+            sm:max-h-[64vh] md:max-h-[74vh] lg:max-h-[62vh]">
+        {% for post in posts %}
+        <div
+            class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-2xl transition duration-300 transform hover:-translate-y-1">
+            <!-- Images -->
+            {% if post.images %}
+            <div class="grid grid-cols-2 gap-1 p-2 bg-gray-50">
+                {% for img in post.images.split(',') %}
+                <img src="{{ url_for('uploaded_file', filename=img | basename) }}" alt="Post image"
+                    class="w-full h-40 object-cover rounded-md border border-gray-200">
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Content -->
+            <div class="p-4">
+                <h2 class="font-bold text-lg mb-2 truncate">{{ post.title }}</h2>
+                <p class="text-gray-700 text-sm mb-2">{{ post.description }}</p>
+                <p class="text-gray-500 text-xs mb-1">
+                    <span class="font-semibold">Scheduled:</span> {{ post.scheduled_at if post.scheduled_at else 'None'
+                    }}
+                </p>
+                <p class="text-gray-500 text-xs mb-1">
+                    <span class="font-semibold">Created:</span> {{ post.created_at.strftime('%Y-%m-%d %H:%M') }}
+                </p>
+            </div>
+        </div>
+        {% endfor %}
+    </main>
+
+</body>
+
+</html>
