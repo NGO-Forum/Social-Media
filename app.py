@@ -274,17 +274,48 @@ def post_facebook(title, desc, media_paths=None):
 
 #--- Instagram posting (single image) ---
 def post_instagram(title, desc, media_path=None):
-    text = f"{title}\n\n{desc}" if title else desc
-    url = f"https://graph.facebook.com/v17.0/{SOCIAL_API['instagram']['instagram_id']}/media"
-    data = {"image_url": media_path, "caption": text, "access_token": SOCIAL_API['instagram']['access_token']}
-    resp = requests.post(url, data=data)
-    if resp.status_code != 200:
-        print("Instagram upload failed:", resp.text)
+    try:
+        text = f"{title}\n\n{desc}" if title else desc
+
+        # --- Step 1: Upload the image (create container) ---
+        url = f"https://graph.facebook.com/v21.0/{SOCIAL_API['instagram']['instagram_id']}/media"
+        payload = {
+            "image_url": media_path,
+            "caption": text,
+            "access_token": SOCIAL_API['instagram']['access_token']
+        }
+
+        resp = requests.post(url, data=payload)
+        resp_data = resp.json()
+
+        if resp.status_code != 200 or "id" not in resp_data:
+            print("❌ Instagram upload failed:")
+            print(resp_data)
+            return False
+
+        creation_id = resp_data["id"]
+
+        # --- Step 2: Publish the container ---
+        publish_url = f"https://graph.facebook.com/v21.0/{SOCIAL_API['instagram']['instagram_id']}/media_publish"
+        publish_payload = {
+            "creation_id": creation_id,
+            "access_token": SOCIAL_API['instagram']['access_token']
+        }
+
+        publish_resp = requests.post(publish_url, data=publish_payload)
+        publish_data = publish_resp.json()
+
+        if publish_resp.status_code == 200 and "id" in publish_data:
+            print("✅ Instagram post published successfully:", publish_data["id"])
+            return True
+        else:
+            print("❌ Failed to publish Instagram media:")
+            print(publish_data)
+            return False
+
+    except Exception as e:
+        print("⚠️ Exception during Instagram posting:", str(e))
         return False
-    creation_id = resp.json().get("id")
-    publish_url = f"https://graph.facebook.com/v17.0/{SOCIAL_API['instagram']['instagram_id']}/media_publish"
-    publish_resp = requests.post(publish_url, data={"creation_id": creation_id, "access_token": SOCIAL_API['instagram']['access_token']})
-    return publish_resp.status_code == 200
 
 
 #--- YouTube token refresh ---
