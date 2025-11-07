@@ -88,7 +88,7 @@
             <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
               <label for="twitter" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-blue-50 cursor-pointer">
                 <input id="twitter" type="checkbox" name="platforms" value="twitter"
-                  class="form-checkbox h-5 w-5 text-blue-400">
+                  class="form-checkbox h-5 w-5 text-blue-400" disabled>
                 <i class="fab fa-twitter text-blue-400"></i>
                 <span>Twitter</span>
               </label>
@@ -112,7 +112,7 @@
               </label>
               <label for="tiktok" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-black/10 cursor-pointer">
                 <input id="tiktok" type="checkbox" name="platforms" value="tiktok"
-                  class="form-checkbox h-5 w-5 text-black">
+                  class="form-checkbox h-5 w-5 text-black" disabled>
                 <i class="fab fa-tiktok text-black"></i>
                 <span>TikTok</span>
               </label>
@@ -235,20 +235,16 @@
     const titleKhPreview = document.getElementById('titleKhPreview');
     const descKhPreview = document.getElementById('descKhPreview');
     const khmerPreviewDiv = document.getElementById('khmerPreviewDiv');
-
     const selectAllCheckbox = document.getElementById('selectAll');
     const platformCheckboxes = document.querySelectorAll('input[name="platforms"]');
     const facebookCheckbox = document.getElementById('facebook');
 
     let filesArray = [];
 
-    // --- Media Preview & Remove ---
     function updatePreview() {
-      // English preview
       titlePreview.textContent = titleInput.value;
       descPreview.textContent = descInput.value;
 
-      // Khmer preview
       if (facebookCheckbox.checked) {
         khmerPreviewDiv.classList.remove('hidden');
         titleKhPreview.textContent = titleKhInput.value;
@@ -257,7 +253,6 @@
         khmerPreviewDiv.classList.add('hidden');
       }
 
-      // Media preview
       mediaPreview.innerHTML = '';
       filesArray.forEach((file, idx) => {
         const container = document.createElement('div');
@@ -276,7 +271,6 @@
           container.appendChild(video);
         }
 
-        // Remove button
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.innerHTML = '&times;';
@@ -285,9 +279,9 @@
           filesArray.splice(idx, 1);
           updateInputFiles();
           updatePreview();
+          toggleVideoPlatforms();
         };
         container.appendChild(removeBtn);
-
         mediaPreview.appendChild(container);
       });
     }
@@ -302,6 +296,7 @@
       filesArray = filesArray.concat(Array.from(e.target.files));
       updateInputFiles();
       updatePreview();
+      toggleVideoPlatforms();
     });
 
     addMoreBtn.addEventListener('click', () => mediaInput.click());
@@ -311,17 +306,16 @@
     titleKhInput.addEventListener('input', updatePreview);
     descKhInput.addEventListener('input', updatePreview);
 
-    // --- Platform Selection ---
+    // --- Select All ---
     selectAllCheckbox.addEventListener('change', () => {
-      platformCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+      platformCheckboxes.forEach(cb => {
+        if (!cb.disabled) cb.checked = selectAllCheckbox.checked;
+      });
       toggleKhmerFields();
     });
 
-    platformCheckboxes.forEach(cb => {
-      cb.addEventListener('change', toggleKhmerFields);
-    });
+    platformCheckboxes.forEach(cb => cb.addEventListener('change', toggleKhmerFields));
 
-    // --- Show/hide Khmer inputs for Facebook ---
     const khmerTitleDiv = document.getElementById('khmerTitleDiv');
     const khmerDescDiv = document.getElementById('khmerDescDiv');
 
@@ -336,81 +330,32 @@
       updatePreview();
     }
 
-    // --- Scheduling Modal ---
-    const scheduleIcon = document.getElementById('scheduleIcon');
-    const scheduleModal = document.getElementById('scheduleModal');
-    const closeModal = document.getElementById('closeModal');
-    const cancelSchedule = document.getElementById('cancelSchedule');
-    const saveSchedule = document.getElementById('saveSchedule');
-    const scheduleInput = document.getElementById('scheduleInput');
-    const scheduledAtHidden = document.getElementById('scheduledAtHidden');
-
-    // Open modal
-    scheduleIcon.addEventListener('click', () => {
-      scheduleModal.classList.remove('hidden');
-    });
-
-    // Close modal
-    closeModal.addEventListener('click', () => {
-      scheduleModal.classList.add('hidden');
-    });
-
-    cancelSchedule.addEventListener('click', () => {
-      scheduleModal.classList.add('hidden');
-    });
-
-    // Save scheduled time
-    saveSchedule.addEventListener('click', () => {
-      if (scheduleInput.value) {
-        scheduledAtHidden.value = scheduleInput.value;
-        const date = new Date(scheduleInput.value);
-        Swal.fire({
-          icon: 'success',
-          title: 'Scheduled!',
-          text: `Your post is scheduled for: ${date.toLocaleString()}`,
-          confirmButtonColor: '#22c55e'
-        });
-        scheduleModal.classList.add('hidden');
-      } else {
-        Swal.fire({
-          icon: 'warning',
-          title: 'Oops!',
-          text: "Please select a date and time!",
-          confirmButtonColor: '#22c55e'
-        });
-      }
-    });
-
+    // --- YouTube Enable/Disable Logic --- //
     const youtubeCheckbox = document.getElementById('youtube');
-    const tiktokCheckbox = document.getElementById('tiktok');
-
-    // Disable YouTube & TikTok initially (no media uploaded)
     youtubeCheckbox.disabled = true;
-    tiktokCheckbox.disabled = true;
     youtubeCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
-    tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
 
-    // Helper function to toggle enable/disable state
     function toggleVideoPlatforms() {
-      const hasMedia = filesArray.length > 0;
+      const hasThreeOrMoreMedia = filesArray.length >= 3;
+      youtubeCheckbox.disabled = !hasThreeOrMoreMedia;
 
-      youtubeCheckbox.disabled = !hasMedia;
-      tiktokCheckbox.disabled = !hasMedia;
-
-      // Add visual feedback
-      if (!hasMedia) {
+      if (!hasThreeOrMoreMedia) {
         youtubeCheckbox.checked = false;
-        tiktokCheckbox.checked = false;
         youtubeCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
-        tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
       } else {
         youtubeCheckbox.parentElement.classList.remove('opacity-50', 'cursor-not-allowed');
-        tiktokCheckbox.parentElement.classList.remove('opacity-50', 'cursor-not-allowed');
       }
     }
 
+    // --- Twitter & TikTok permanently disabled --- //
+    const twitterCheckbox = document.getElementById('twitter');
+    const tiktokCheckbox = document.getElementById('tiktok');
+    [twitterCheckbox, tiktokCheckbox].forEach(cb => {
+      cb.disabled = true;
+      cb.checked = false;
+      cb.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
+    });
 
-    // Initialize
     toggleKhmerFields();
 
   </script>

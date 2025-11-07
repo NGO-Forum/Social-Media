@@ -12,11 +12,13 @@ from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask_sqlalchemy import SQLAlchemy
 from flask import send_from_directory
+from pathlib import Path
 
 # Fix for Pillow >= 10 / Python 3.13
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.Resampling.LANCZOS
 
+dotenv_path = Path(__file__).parent / ".env"
 load_dotenv()  # Load tokens from .env
 
 app = Flask(__name__)

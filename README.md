@@ -14,4 +14,5 @@ Python, Selenium and Flask are being used to make the magic happen.
     <li>If any code from this project is used, do add my name in the list of contributers.</li>
     <li>Found an issue? Open a new issue if it's not already listed</li>
     <li>Want to contribute to this project? Fork the repo, make changes and then send a pull request.</li>
+    <li>TRUNCATE TABLE posts;.</li>
 </ul>
