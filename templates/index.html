@@ -356,6 +356,54 @@
       cb.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
     });
 
+    // --- SCHEDULER MODAL LOGIC ---
+    const scheduleIcon = document.getElementById("scheduleIcon");
+    const scheduleModal = document.getElementById("scheduleModal");
+    const closeModal = document.getElementById("closeModal");
+    const cancelSchedule = document.getElementById("cancelSchedule");
+    const saveSchedule = document.getElementById("saveSchedule");
+    const scheduleInput = document.getElementById("scheduleInput");
+    const scheduledAtHidden = document.getElementById("scheduledAtHidden");
+
+    // Open modal
+    scheduleIcon.addEventListener("click", () => {
+      scheduleModal.classList.remove("hidden");
+    });
+
+    // Close modal (X)
+    closeModal.addEventListener("click", () => {
+      scheduleModal.classList.add("hidden");
+    });
+
+    // Cancel button
+    cancelSchedule.addEventListener("click", () => {
+      scheduleModal.classList.add("hidden");
+    });
+
+    // Save schedule
+    saveSchedule.addEventListener("click", () => {
+      if (scheduleInput.value === "") {
+        Swal.fire({
+          icon: "warning",
+          title: "Missing date & time",
+          text: "Please select a schedule time!"
+        });
+        return;
+      }
+
+      scheduledAtHidden.value = scheduleInput.value;  // Save to hidden input
+      scheduleModal.classList.add("hidden");
+
+      Swal.fire({
+        icon: "success",
+        title: "Schedule Set",
+        text: "Your post will be scheduled.",
+        timer: 1500,
+        showConfirmButton: false
+      });
+    });
+
+
     toggleKhmerFields();
 
   </script>

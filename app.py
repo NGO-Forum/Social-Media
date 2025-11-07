@@ -12,6 +12,7 @@ from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask_sqlalchemy import SQLAlchemy
 from flask import send_from_directory
+from google.auth.transport.requests import Request
 from pathlib import Path
 
 # Fix for Pillow >= 10 / Python 3.13
@@ -166,6 +167,30 @@ def post_twitter(title, desc):
         return False
     
 
+#--- Facebook/Instagram token refresh ---
+def refresh_facebook_instagram_token():
+    token = SOCIAL_API['facebook']['access_token']
+    app_id = os.getenv("FB_APP_ID")
+    app_secret = os.getenv("FB_APP_SECRET")
+
+    url = f"https://graph.facebook.com/v19.0/oauth/access_token"\
+          f"?grant_type=fb_exchange_token"\
+          f"&client_id={app_id}"\
+          f"&client_secret={app_secret}"\
+          f"&fb_exchange_token={token}"
+
+    r = requests.get(url)
+    if r.status_code == 200:
+        new_token = r.json().get("access_token")
+        SOCIAL_API['facebook']['access_token'] = new_token
+        SOCIAL_API['instagram']['access_token'] = new_token
+        print("✅ Facebook/Instagram token refreshed!")
+    else:
+        print("❌ Facebook token refresh failed:", r.text)
+
+scheduler.add_job(refresh_facebook_instagram_token, 'interval', days=1)
+
+
 #--- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths=None):
     """
@@ -262,19 +287,85 @@ def post_instagram(title, desc, media_path=None):
     return publish_resp.status_code == 200
 
 
-#--- YouTube posting ---
+#--- YouTube token refresh ---
+def refresh_youtube_token():
+    """Refresh YouTube OAuth token using refresh_token inside token.json."""
+    try:
+        creds_file = SOCIAL_API['youtube']['creds_file']
+
+        if not os.path.exists(creds_file):
+            print("⚠️ YouTube: token.json not found, cannot refresh.")
+            return
+
+        creds = Credentials.from_authorized_user_file(creds_file, SCOPES_YOUTUBE)
+
+        # Refresh access token if expired & refresh_token is available
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+
+            with open(creds_file, "w") as f:
+                f.write(creds.to_json())
+
+            print("✅ YouTube token refreshed successfully.")
+        else:
+            print("✅ YouTube token is still valid.")
+
+    except Exception as e:
+        print("❌ YouTube refresh error:", e)
+
+scheduler.add_job(refresh_youtube_token, 'interval', minutes=30)
+
+# --- YouTube posting (with auto refresh) ---
 def post_youtube(title, desc, media_path):
-    creds = Credentials.from_authorized_user_file(SOCIAL_API['youtube']['creds_file'], SCOPES_YOUTUBE)
-    youtube = build("youtube", "v3", credentials=creds)
-    media = MediaFileUpload(media_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body={"snippet": {"title": title if title else (desc[:50] if desc else "Video"), "description": desc},
-              "status": {"privacyStatus": "public"}},
-        media_body=media
-    )
-    response = request.execute()
-    return "id" in response
+    creds_file = SOCIAL_API['youtube']['creds_file']
+
+    if not os.path.exists(creds_file):
+        print("❌ token.json missing — run YouTube OAuth script first!")
+        return False
+
+    # Load token
+    creds = Credentials.from_authorized_user_file(creds_file, SCOPES_YOUTUBE)
+
+    # ✅ Refresh token if needed
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            with open(creds_file, "w") as f:
+                f.write(creds.to_json())
+            print("✅ YouTube token refreshed before upload.")
+        except Exception as e:
+            print("❌ Failed to refresh YouTube token:", e)
+            return False
+
+    try:
+        youtube = build("youtube", "v3", credentials=creds)
+        media = MediaFileUpload(media_path, chunksize=-1, resumable=True)
+
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": title if title else (desc[:50] if desc else "Video"),
+                    "description": desc or ""
+                },
+                "status": {"privacyStatus": "public"}
+            },
+            media_body=media
+        )
+
+        response = request.execute()
+
+        if "id" in response:
+            print("✅ YouTube upload successful:", response["id"])
+            return True
+
+        print("❌ YouTube upload failed:", response)
+        return False
+
+    except Exception as e:
+        print("❌ YouTube post exception:", e)
+        return False
+
 
 
 #--- TikTok posting ---
