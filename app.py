@@ -169,60 +169,6 @@ def post_twitter(title, desc):
         return False
     
 
-#--- Facebook/Instagram token refresh ---
-def refresh_facebook_instagram_token():
-    print("🔄 Refreshing Facebook/Instagram tokens...")
-
-    user_token = SOCIAL_API['facebook']['access_token']
-    app_id = os.getenv("FB_APP_ID")
-    app_secret = os.getenv("FB_APP_SECRET")
-
-    # ✅ Step 1: Convert short-lived user token → long-lived user token
-    exchange_url = (
-        "https://graph.facebook.com/v19.0/oauth/access_token"
-        f"?grant_type=fb_exchange_token"
-        f"&client_id={app_id}"
-        f"&client_secret={app_secret}"
-        f"&fb_exchange_token={user_token}"
-    )
-
-    exchange_resp = requests.get(exchange_url).json()
-    long_user_token = exchange_resp.get("access_token")
-
-    if not long_user_token:
-        print("❌ Could not exchange user token:", exchange_resp)
-        return
-
-    # ✅ Step 2: Get Page Access Token from /me/accounts
-    accounts_url = f"https://graph.facebook.com/v19.0/me/accounts?access_token={long_user_token}"
-    accounts_resp = requests.get(accounts_url).json()
-
-    pages = accounts_resp.get("data", [])
-    page_id = SOCIAL_API['facebook']['page_id']
-    page_token = None
-
-    for pg in pages:
-        if pg["id"] == page_id:
-            page_token = pg.get("access_token")
-            break
-
-    if not page_token:
-        print("❌ FAILED: No page token returned. Check FB app permissions!")
-        print("Response:", accounts_resp)
-        return
-
-    # ✅ Save Page Token for both FB + IG
-    SOCIAL_API['facebook']['access_token'] = page_token
-    SOCIAL_API['instagram']['access_token'] = page_token
-
-    print("✅ Facebook/Instagram Page Token refreshed correctly!")
-    print("🔐 New Page Token:", page_token[:30] + "...")
-
-
-# Schedule token refresh every day
-scheduler.add_job(refresh_facebook_instagram_token, 'interval', hours=12)
-
-
 #--- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths=None):
     
