@@ -245,13 +245,19 @@
       titlePreview.textContent = titleInput.value;
       descPreview.textContent = descInput.value;
 
-      if (facebookCheckbox.checked) {
+      const showKhmerInPreview =
+        facebookCheckbox.checked ||
+        document.getElementById('youtube').checked ||
+        document.getElementById('linkedin').checked;
+
+      if (showKhmerInPreview) {
         khmerPreviewDiv.classList.remove('hidden');
         titleKhPreview.textContent = titleKhInput.value;
         descKhPreview.textContent = descKhInput.value;
       } else {
         khmerPreviewDiv.classList.add('hidden');
       }
+
 
       mediaPreview.innerHTML = '';
       filesArray.forEach((file, idx) => {
@@ -320,15 +326,23 @@
     const khmerDescDiv = document.getElementById('khmerDescDiv');
 
     function toggleKhmerFields() {
-      if (facebookCheckbox.checked) {
-        khmerTitleDiv.classList.remove('hidden');
-        khmerDescDiv.classList.remove('hidden');
-      } else {
-        khmerTitleDiv.classList.add('hidden');
-        khmerDescDiv.classList.add('hidden');
-      }
+      const youtubeCheckbox = document.getElementById('youtube');
+      const linkedinCheckbox = document.getElementById('linkedin');
+
+      // Khmer should show for these platforms
+      const showKhmer =
+        facebookCheckbox.checked ||
+        youtubeCheckbox.checked ||
+        linkedinCheckbox.checked;
+
+      khmerTitleDiv.classList.toggle('hidden', !showKhmer);
+      khmerDescDiv.classList.toggle('hidden', !showKhmer);
+
+      khmerPreviewDiv.classList.toggle('hidden', !showKhmer);
+
       updatePreview();
     }
+
 
     // --- YouTube Enable/Disable Logic --- //
     const youtubeCheckbox = document.getElementById('youtube');

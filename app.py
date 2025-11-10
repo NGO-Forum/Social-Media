@@ -1,19 +1,21 @@
 from flask import Flask, render_template, request, render_template_string, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-import os, requests, json, tweepy
+import os, requests, json, tweepy, re
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
 from datetime import datetime, timedelta, timezone
-from PIL import Image
 from apscheduler.schedulers.background import BackgroundScheduler
+from pytz import timezone as pytz_timezone
+from PIL import Image
 from flask_sqlalchemy import SQLAlchemy
 from flask import send_from_directory
 from google.auth.transport.requests import Request
 from pathlib import Path
+from openai import OpenAI
 
 # Fix for Pillow >= 10 / Python 3.13
 if not hasattr(Image, "ANTIALIAS"):
@@ -37,10 +39,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-now = datetime.now(timezone.utc)
+now = datetime.now(pytz_timezone('Asia/Phnom_Penh'))
 
 # --- Scheduler ---
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone=pytz_timezone('Asia/Phnom_Penh'))
 scheduler.start()
 
 
@@ -169,43 +171,70 @@ def post_twitter(title, desc):
 
 #--- Facebook/Instagram token refresh ---
 def refresh_facebook_instagram_token():
-    token = SOCIAL_API['facebook']['access_token']
+    print("🔄 Refreshing Facebook/Instagram tokens...")
+
+    user_token = SOCIAL_API['facebook']['access_token']
     app_id = os.getenv("FB_APP_ID")
     app_secret = os.getenv("FB_APP_SECRET")
 
-    url = f"https://graph.facebook.com/v19.0/oauth/access_token"\
-          f"?grant_type=fb_exchange_token"\
-          f"&client_id={app_id}"\
-          f"&client_secret={app_secret}"\
-          f"&fb_exchange_token={token}"
+    # ✅ Step 1: Convert short-lived user token → long-lived user token
+    exchange_url = (
+        "https://graph.facebook.com/v19.0/oauth/access_token"
+        f"?grant_type=fb_exchange_token"
+        f"&client_id={app_id}"
+        f"&client_secret={app_secret}"
+        f"&fb_exchange_token={user_token}"
+    )
 
-    r = requests.get(url)
-    if r.status_code == 200:
-        new_token = r.json().get("access_token")
-        SOCIAL_API['facebook']['access_token'] = new_token
-        SOCIAL_API['instagram']['access_token'] = new_token
-        print("✅ Facebook/Instagram token refreshed!")
-    else:
-        print("❌ Facebook token refresh failed:", r.text)
+    exchange_resp = requests.get(exchange_url).json()
+    long_user_token = exchange_resp.get("access_token")
 
-scheduler.add_job(refresh_facebook_instagram_token, 'interval', days=1)
+    if not long_user_token:
+        print("❌ Could not exchange user token:", exchange_resp)
+        return
+
+    # ✅ Step 2: Get Page Access Token from /me/accounts
+    accounts_url = f"https://graph.facebook.com/v19.0/me/accounts?access_token={long_user_token}"
+    accounts_resp = requests.get(accounts_url).json()
+
+    pages = accounts_resp.get("data", [])
+    page_id = SOCIAL_API['facebook']['page_id']
+    page_token = None
+
+    for pg in pages:
+        if pg["id"] == page_id:
+            page_token = pg.get("access_token")
+            break
+
+    if not page_token:
+        print("❌ FAILED: No page token returned. Check FB app permissions!")
+        print("Response:", accounts_resp)
+        return
+
+    # ✅ Save Page Token for both FB + IG
+    SOCIAL_API['facebook']['access_token'] = page_token
+    SOCIAL_API['instagram']['access_token'] = page_token
+
+    print("✅ Facebook/Instagram Page Token refreshed correctly!")
+    print("🔐 New Page Token:", page_token[:30] + "...")
+
+
+# Schedule token refresh every day
+scheduler.add_job(refresh_facebook_instagram_token, 'interval', hours=12)
 
 
 #--- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths=None):
-    """
-    Post to Facebook Page. Supports text, multiple images, or a single video.
-    Uses a Page Access Token and Page endpoints only.
-    """
+    
     text = (title + "\n\n" if title else "") + (desc if desc else "")
     page_id = SOCIAL_API['facebook']['page_id']
     token = SOCIAL_API['facebook']['access_token']
 
     try:
-        # Separate images and videos
         images = []
         video = None
 
+        # Separate images and videos
         if media_paths:
             for path in media_paths:
                 if not os.path.exists(path):
@@ -214,52 +243,69 @@ def post_facebook(title, desc, media_paths=None):
                 if ext in ['.jpg', '.jpeg', '.png', '.gif']:
                     images.append(path)
                 elif ext in ['.mp4', '.mov', '.avi', '.mkv'] and video is None:
-                    video = path  # Only one video allowed
-                else:
-                    print("Skipping unsupported file:", path)
+                    video = path
 
-        # --- Handle multiple images ---
+        # ---- Upload multiple images as unpublished ----
         attached_media = []
         for img in images:
             with open(img, "rb") as f:
                 url = f"https://graph.facebook.com/v17.0/{page_id}/photos"
-                data = {"published": "false", "access_token": token}
+                data = {
+                    "published": False,        # FIXED ✅ boolean
+                    "access_token": token
+                }
                 files = {"source": f}
+
                 resp = requests.post(url, data=data, files=files)
+
                 if resp.status_code in [200, 201]:
                     media_fbid = resp.json().get("id")
-                    attached_media.append({"media_fbid": media_fbid})
+                    attached_media.append(media_fbid)
                 else:
                     print("Failed to upload image:", resp.text)
 
-        # --- Create post for images ---
+        # ---- Create final image post ----
         if attached_media:
             post_url = f"https://graph.facebook.com/v17.0/{page_id}/feed"
-            post_data = {
+
+            # Build form-data manually (Facebook requirement)
+            form = {
                 "message": text,
-                "attached_media": attached_media,
                 "access_token": token
             }
-            resp = requests.post(post_url, json=post_data)
+
+            # Facebook requires attached_media[0][media_fbid]=123
+            for i, media_id in enumerate(attached_media):
+                form[f"attached_media[{i}][media_fbid]"] = media_id
+
+            resp = requests.post(post_url, data=form)
             print("Facebook image post response:", resp.status_code, resp.text)
+
             if resp.status_code not in [200, 201]:
                 return False
 
-        # --- Handle single video ---
+        # ---- Handle single video ----
         if video:
             with open(video, "rb") as f:
                 url = f"https://graph.facebook.com/v17.0/{page_id}/videos"
-                data = {"description": text, "access_token": token}
+                data = {
+                    "description": text,
+                    "access_token": token
+                }
                 files = {"source": f}
+
                 resp = requests.post(url, data=data, files=files)
                 print("Facebook video post response:", resp.status_code, resp.text)
                 if resp.status_code not in [200, 201]:
                     return False
 
-        # If no media, post text only
+        # ---- Text-only post ----
         if not images and not video:
             url = f"https://graph.facebook.com/v17.0/{page_id}/feed"
-            data = {"message": text, "access_token": token}
+            data = {
+                "message": text,
+                "access_token": token
+            }
             resp = requests.post(url, data=data)
             print("Facebook text post response:", resp.status_code, resp.text)
             if resp.status_code not in [200, 201]:
@@ -273,49 +319,72 @@ def post_facebook(title, desc, media_paths=None):
 
 
 #--- Instagram posting (single image) ---
-def post_instagram(title, desc, media_path=None):
+def post_instagram(summary_text, media_paths=None):
     try:
-        text = f"{title}\n\n{desc}" if title else desc
+        caption = summary_text or ""
+        ig_id = SOCIAL_API['instagram']['instagram_id']
+        token = SOCIAL_API['instagram']['access_token']
 
-        # --- Step 1: Upload the image (create container) ---
-        url = f"https://graph.facebook.com/v21.0/{SOCIAL_API['instagram']['instagram_id']}/media"
-        payload = {
-            "image_url": media_path,
-            "caption": text,
-            "access_token": SOCIAL_API['instagram']['access_token']
-        }
-
-        resp = requests.post(url, data=payload)
-        resp_data = resp.json()
-
-        if resp.status_code != 200 or "id" not in resp_data:
-            print("❌ Instagram upload failed:")
-            print(resp_data)
+        if not media_paths:
+            print("❌ Instagram requires at least one image")
             return False
 
-        creation_id = resp_data["id"]
+        uploaded_ids = []
 
-        # --- Step 2: Publish the container ---
-        publish_url = f"https://graph.facebook.com/v21.0/{SOCIAL_API['instagram']['instagram_id']}/media_publish"
-        publish_payload = {
-            "creation_id": creation_id,
-            "access_token": SOCIAL_API['instagram']['access_token']
-        }
+        # ✅ Your domain for public file access
+        DOMAIN = "https://your-domain.com/uploads/"  
 
-        publish_resp = requests.post(publish_url, data=publish_payload)
-        publish_data = publish_resp.json()
+        # ✅ Step 1: Upload using image_url (Instagram requirement)
+        for path in media_paths[:10]:
+            filename = os.path.basename(path)
+            image_url = DOMAIN + filename
 
-        if publish_resp.status_code == 200 and "id" in publish_data:
-            print("✅ Instagram post published successfully:", publish_data["id"])
-            return True
+            payload = {
+                "image_url": image_url,
+                "caption": caption if len(uploaded_ids) == 0 else "",
+                "access_token": token
+            }
+
+            url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
+            resp = requests.post(url, data=payload)
+            data = resp.json()
+
+            if "id" not in data:
+                print("❌ Instagram upload failed:", data)
+                return False
+
+            uploaded_ids.append(data["id"])
+
+        # ✅ Step 2: Publish
+        if len(uploaded_ids) > 1:
+            publish_url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
+            payload = {
+                "media_type": "CAROUSEL",
+                "children": uploaded_ids,
+                "caption": caption,
+                "access_token": token
+            }
         else:
-            print("❌ Failed to publish Instagram media:")
-            print(publish_data)
-            return False
+            publish_url = f"https://graph.facebook.com/v21.0/{ig_id}/media_publish"
+            payload = {
+                "creation_id": uploaded_ids[0],
+                "access_token": token
+            }
+
+        publish_resp = requests.post(publish_url, data=payload)
+        data = publish_resp.json()
+
+        if publish_resp.status_code == 200 and "id" in data:
+            print("✅ Instagram post published:", data["id"])
+            return True
+
+        print("❌ Publish failed:", data)
+        return False
 
     except Exception as e:
-        print("⚠️ Exception during Instagram posting:", str(e))
+        print("⚠️ Instagram error:", e)
         return False
+
 
 
 #--- YouTube token refresh ---
@@ -431,7 +500,7 @@ def get_tiktok_access_token():
         print("❌ No TikTok token found. Please login via /tiktok/login")
         return None
 
-    expires_at = datetime.fromisoformat(tokens["expires_at"])
+    expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
     if datetime.now(timezone.utc) >= expires_at:
         # Refresh token
         refresh_token = tokens.get("refresh_token")
@@ -518,7 +587,7 @@ def get_linkedin_access_token():
         print("❌ No LinkedIn tokens found. Please login via /linkedin/login")
         return None
 
-    expires_at = datetime.fromisoformat(tokens["expires_at"])
+    expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
     if datetime.now(timezone.utc) >= expires_at:
         # Access token expired, try refresh
         refresh_token = tokens.get("refresh_token")
@@ -554,6 +623,8 @@ def refresh_linkedin_token():
         return
 
     expires_at = datetime.fromisoformat(tokens["expires_at"])
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     # Refresh 1 hour before expiry
     if datetime.now(timezone.utc) + timedelta(hours=1) >= expires_at:
         refresh_token = tokens.get("refresh_token")
@@ -705,6 +776,123 @@ def linkedin_callback():
     return "LinkedIn authorized successfully!"
 
 
+# --- Text summarization for Khmer + English ---
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+TEMPLATE = """
+    You are a professional summarizer for NGO Forum Cambodia.
+
+    You MUST read the mixed Khmer + English text and extract:
+
+    ### Khmer fields
+    - កម្មវិធី (Khmer event name)
+    - កាលពីថ្ងៃ (Khmer date)
+    - ក្រោមប្រធានបទ (Khmer theme — optional)
+    - ចំនួនអ្នកចូលរួម (ONLY if exists)
+    - គោលបំណងសំខាន់ (3 short bullets in Khmer)
+    - លទ្ធផល (ONE professional summarized Khmer sentence)
+
+    ### English fields
+    - Event (short clean event name only, no “Event:” label)
+    - Date
+    - Theme
+    - Participants (ONLY if exists)
+    - Key Objectives (3 short bullets)
+    - Outcome (ONE professional summarized English sentence)
+
+    ### EVENT RULES
+    - If event name not clearly provided → infer from context.
+    - English event must be short and professional.
+    Example outputs:
+      - “Cambodia Water Festival Greeting”
+      - “Consultation on Draft Social Housing Policy”
+      - “2025 Membership Meeting”
+
+    ### THEME RULES
+    - If theme exists → extract it cleanly without quotes.
+    - If missing → use “N/A”.
+
+    ### PARTICIPANTS RULES
+    - If participant number exists → output it normally.
+    - If NO participant information → DO NOT show any participants text.
+    - NEVER write “Participants: N/A”.
+
+    ### OUTCOME RULES
+    - MUST BE **1 sentence only**
+    - MUST summarize the full text clearly and professionally
+    - MUST NOT copy original text
+    - MUST NOT add new unrelated ideas
+    - MUST be short, strong, and clear
+
+    ### OUTPUT FORMAT (STRICT)
+
+    នៅថ្ងៃទី: <date_kh> <event_kh> ក្រោមប្រធានបទ: <theme_kh><participants_kh_line>
+
+    គោលបំណងសំខាន់
+    • <point1_kh>
+    • <point2_kh>
+    • <point3_kh>
+
+    លទ្ធផល
+    <outcome_kh>
+
+
+    Date: <date_en> <event_en> under the theme: <theme_en><participants_en_line>
+
+    Key Objectives
+    • <point1_en>
+    • <point2_en>
+    • <point3_en>
+
+    Outcome
+    <outcome_en>
+
+    ### FORMAT RULES
+    - <participants_kh_line> must be:
+        " ដែលមានចំនួនអ្នកចូលរួម: <x>"   → ONLY IF participants exist
+        "" (empty) → if no participants exist
+    - <participants_en_line> must be:
+        " with a total of Participants: <x>" → ONLY IF participants exist
+        "" (empty) → if no participants exist
+    - Bullet points must be short, summarized, and professional.
+    - Maintain EXACT structure. No additional text before or after.
+    """
+
+
+
+def clean_input_text(text):
+    # Normalize quotes
+    text = text.replace("«", "\"").replace("»", "\"")
+    text = text.replace("“", "\"").replace("”", "\"")
+
+    # Remove trailing "។" after quotes
+    text = re.sub(r'\"\s*។', '"', text)
+
+    # Remove duplicate Khmer header indicators
+    text = re.sub(r"^🇰🇭.*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^🇬🇧.*", "", text, flags=re.MULTILINE)
+
+    # Remove duplicated summary sections
+    text = re.sub(r"Summary.*", "", text, flags=re.IGNORECASE)
+
+    return text.strip()
+
+
+def summarize_text(full_text):
+    cleaned = clean_input_text(full_text)
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": TEMPLATE},
+            {"role": "user", "content": cleaned}
+        ],
+        temperature=0.2
+    )
+
+    return response.choices[0].message.content
+
+
 # --- Routes ---
 @app.route("/", methods=["GET"])
 @login_required
@@ -728,6 +916,28 @@ def post_all():
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(path)
         media_paths.append(path)
+
+
+    # Build full text (Khmer + English)
+    full_text_parts = []
+
+    # Khmer first
+    if title_kh:
+        full_text_parts.append(title_kh)
+    if desc_kh:
+        full_text_parts.append(desc_kh)
+
+    # English
+    if title:
+        full_text_parts.append(title)
+    if desc:
+        full_text_parts.append(desc)
+
+    full_text = "\n\n".join(full_text_parts)
+
+    # ✅ Auto summarize for YouTube & LinkedIn
+    summary_text = summarize_text(full_text)
+
 
     # --- Save post to database ---
     images_str = ",".join(media_paths) if media_paths else None
@@ -793,11 +1003,19 @@ def post_all():
                 if platform == "twitter":
                     success = post_twitter(title, desc)
                 elif platform == "instagram":
-                    success = media_paths and post_instagram(title, desc, media_paths[:3])
+                    success = media_paths and post_instagram(summary_text, media_paths[:3])
                 elif platform == "youtube":
-                    success = (slideshow_path or media_paths) and post_youtube(title, desc, slideshow_path or media_paths[0])
+                    success = post_youtube(
+                        title_kh or title or "Update",
+                        summary_text,
+                        slideshow_path or media_paths[0]
+                    )
                 elif platform == "linkedin":
-                    success = media_paths and post_linkedin_org(title, desc, media_paths[:3])
+                    success = post_linkedin_org(
+                        None,
+                        summary_text,
+                        media_paths[:3]
+                    )
                 elif platform == "tiktok":
                     success = (slideshow_path or media_paths) and post_tiktok(title, desc, slideshow_path or media_paths[0])
 
@@ -817,8 +1035,11 @@ def post_all():
 
     # --- Check if scheduled ---
     if scheduled_time_str:
-        scheduled_time = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
-        scheduler.add_job(lambda: do_post(new_post), 'date', run_date=scheduled_time)
+        tz = pytz_timezone('Asia/Phnom_Penh')
+        naive = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
+        scheduled_time = tz.localize(naive)
+
+        scheduler.add_job(do_post, 'date', run_date=scheduled_time, args=[new_post])
         return render_template_string("""
         <html>
         <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
