@@ -169,86 +169,94 @@ def post_twitter(title, desc):
         return False
     
 
-#--- Facebook posting with multiple images or single video ---
+# --- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths=None):
-
     text = (title + "\n\n" if title else "") + (desc if desc else "")
     page_id = SOCIAL_API['facebook']['page_id']
     token = SOCIAL_API['facebook']['access_token']
 
     try:
+        DOMAIN = "https://media.mengseu-student.site/uploads/"
+
         images = []
         video = None
 
-        # Separate image / video
+        # Separate image vs video
         if media_paths:
             for path in media_paths:
-                if not os.path.exists(path):
-                    continue
                 ext = os.path.splitext(path)[1].lower()
                 if ext in ['.jpg', '.jpeg', '.png', '.gif']:
                     images.append(path)
                 elif ext in ['.mp4', '.mov', '.avi', '.mkv']:
                     video = path
 
-        attached_media = []
+        attached_media_ids = []
 
-        # ✅ Upload images (unpublished)
+        # ✅ Upload IMAGES using PUBLIC URL
         for img in images:
-            with open(img, "rb") as f:
-                url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
-                data = {
-                    "published": False,
-                    "access_token": token
-                }
-                resp = requests.post(url, data=data, files={"source": f})
+            filename = os.path.basename(img)
+            image_url = DOMAIN + filename
 
-                if resp.status_code in [200, 201]:
-                    attached_media.append(resp.json()["id"])
-                else:
-                    print("Failed to upload image:", resp.text)
+            print("Uploading FB Image URL:", image_url)
 
-        # ✅ Create carousel post
-        if attached_media:
-            post_url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+            upload_url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
+            payload = {
+                "url": image_url,
+                "published": False,
+                "access_token": token
+            }
+
+            resp = requests.post(upload_url, data=payload)
+            data = resp.json()
+
+            if "id" in data:
+                attached_media_ids.append(data["id"])
+            else:
+                print("❌ FB image upload failed:", data)
+
+        # ✅ Publish IMAGE CAROUSEL
+        if attached_media_ids:
+            publish_url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
             form = {
                 "message": text,
                 "access_token": token
             }
-            for i, media_id in enumerate(attached_media):
+
+            for i, media_id in enumerate(attached_media_ids):
                 form[f"attached_media[{i}][media_fbid]"] = media_id
 
-            resp = requests.post(post_url, data=form)
-            print("Facebook image post response:", resp.status_code, resp.text)
-            return resp.status_code in [200, 201]
+            publish_resp = requests.post(publish_url, data=form)
+            print("✅ Facebook image post:", publish_resp.text)
 
-        # ✅ Video post
+            return publish_resp.status_code in [200, 201]
+
+        # ✅ Upload VIDEO
         if video:
             with open(video, "rb") as f:
-                url = f"https://graph.facebook.com/v19.0/{page_id}/videos"
+                video_url = f"https://graph.facebook.com/v19.0/{page_id}/videos"
                 data = {
                     "description": text,
                     "access_token": token
                 }
-                resp = requests.post(url, data=data, files={"source": f})
-                print("Facebook video post:", resp.status_code, resp.text)
+                resp = requests.post(video_url, data=data, files={"source": f})
+                print("✅ Facebook video post:", resp.text)
                 return resp.status_code in [200, 201]
 
         # ✅ Text-only post
         if not images and not video:
-            url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+            text_url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
             data = {
                 "message": text,
                 "access_token": token
             }
-            resp = requests.post(url, data=data)
-            print("Facebook text post:", resp.status_code, resp.text)
+            resp = requests.post(text_url, data=data)
+            print("✅ Facebook text post:", resp.text)
             return resp.status_code in [200, 201]
 
         return False
 
     except Exception as e:
-        print("Facebook post exception:", e)
+        print("❌ Facebook post exception:", e)
         return False
 
 
@@ -1079,7 +1087,10 @@ def show_posts():
 
 
 if __name__ == "__main__":
+    # with app.app_context():
+    #     db.create_all()
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=True)
+

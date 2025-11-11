@@ -16,3 +16,8 @@ Python, Selenium and Flask are being used to make the magic happen.
     <li>Want to contribute to this project? Fork the repo, make changes and then send a pull request.</li>
     <li>TRUNCATE TABLE posts;.</li>
 </ul>
+
+# MySQL connection
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@172.31.21.60/media'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
