@@ -86,12 +86,13 @@
             </label>
 
             <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <label for="twitter" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-blue-50 cursor-pointer">
-                <input id="twitter" type="checkbox" name="platforms" value="twitter"
-                  class="form-checkbox h-5 w-5 text-blue-400" disabled>
-                <i class="fab fa-twitter text-blue-400"></i>
-                <span>Twitter</span>
+              <label for="website" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-blue-50 cursor-pointer">
+                <input id="website" type="checkbox" name="platforms" value="website"
+                  class="form-checkbox h-5 w-5 text-blue-400">
+                <i class="fa-solid fa-globe text-blue-400"></i>
+                <span>Website</span>
               </label>
+
               <label for="facebook" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-blue-50 cursor-pointer">
                 <input id="facebook" type="checkbox" name="platforms" value="facebook"
                   class="form-checkbox h-5 w-5 text-blue-600">
@@ -134,6 +135,20 @@
             <button type="button" id="addMore"
               class="mt-2 px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700">+ Add More</button>
           </div>
+
+          <!-- WEBSITE Department Selector -->
+          <div id="websiteDeptDiv" class="hidden mt-4">
+            <label class="block text-lg font-semibold mb-2 text-gray-700">Website Department</label>
+            <select id="websiteDepartment" name="website_department"
+              class="w-40 border p-3 rounded-lg focus:ring-2 focus:ring-green-400 focus:outline-none">
+              <option value="">Department</option>
+              <option value="PALI">PALI</option>
+              <option value="RITI">RITI</option>
+              <option value="SACHAS">SACHAS</option>
+              <option value="MACOR">MACOR</option>
+            </select>
+          </div>
+
 
           <!-- Titles -->
           <div>
@@ -361,14 +376,25 @@
       }
     }
 
-    // --- Twitter & TikTok permanently disabled --- //
-    const twitterCheckbox = document.getElementById('twitter');
+    // --- Website (formerly Twitter) & TikTok disabled? (TikTok only) --- //
     const tiktokCheckbox = document.getElementById('tiktok');
-    [twitterCheckbox, tiktokCheckbox].forEach(cb => {
-      cb.disabled = true;
-      cb.checked = false;
-      cb.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
+    // TikTok remains disabled
+    tiktokCheckbox.disabled = true;
+    tiktokCheckbox.checked = false;
+    tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
+
+
+    const websiteCheckbox = document.getElementById('website');
+    const websiteDeptDiv = document.getElementById('websiteDeptDiv');
+
+    websiteCheckbox.addEventListener('change', () => {
+      if (websiteCheckbox.checked) {
+        websiteDeptDiv.classList.remove('hidden');
+      } else {
+        websiteDeptDiv.classList.add('hidden');
+      }
     });
+
 
     // --- SCHEDULER MODAL LOGIC ---
     const scheduleIcon = document.getElementById("scheduleIcon");
