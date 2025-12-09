@@ -113,7 +113,7 @@
               </label>
               <label for="tiktok" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-black/10 cursor-pointer">
                 <input id="tiktok" type="checkbox" name="platforms" value="tiktok"
-                  class="form-checkbox h-5 w-5 text-black" disabled>
+                  class="form-checkbox h-5 w-5 text-black">
                 <i class="fab fa-tiktok text-black"></i>
                 <span>TikTok</span>
               </label>
@@ -305,6 +305,9 @@
         container.appendChild(removeBtn);
         mediaPreview.appendChild(container);
       });
+
+      // IMPORTANT ADD THIS
+      toggleVideoPlatforms();
     }
 
     function updateInputFiles() {
@@ -359,31 +362,40 @@
     }
 
 
-    // --- YouTube Enable/Disable Logic --- //
+    // --- YouTube & TikTok Enable/Disable Logic --- //
     const youtubeCheckbox = document.getElementById('youtube');
+    const tiktokCheckbox = document.getElementById('tiktok');
+
+    // Disable both by default
     youtubeCheckbox.disabled = true;
     youtubeCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
 
-    function toggleVideoPlatforms() {
-      const hasThreeOrMoreMedia = filesArray.length >= 3;
-      youtubeCheckbox.disabled = !hasThreeOrMoreMedia;
+    tiktokCheckbox.disabled = true;
+    tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
 
-      if (!hasThreeOrMoreMedia) {
+    function toggleVideoPlatforms() {
+      const hasFourOrMoreMedia = filesArray.length >= 4;
+
+      // ------------------ YouTube ------------------ //
+      youtubeCheckbox.disabled = !hasFourOrMoreMedia;
+      if (!hasFourOrMoreMedia) {
         youtubeCheckbox.checked = false;
         youtubeCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
       } else {
         youtubeCheckbox.parentElement.classList.remove('opacity-50', 'cursor-not-allowed');
       }
+
+      // ------------------ TikTok ------------------ //
+      tiktokCheckbox.disabled = !hasFourOrMoreMedia;
+      if (!hasFourOrMoreMedia) {
+        tiktokCheckbox.checked = false;
+        tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
+      } else {
+        tiktokCheckbox.parentElement.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
     }
 
-    // --- Website (formerly Twitter) & TikTok disabled? (TikTok only) --- //
-    const tiktokCheckbox = document.getElementById('tiktok');
-    // TikTok remains disabled
-    tiktokCheckbox.disabled = true;
-    tiktokCheckbox.checked = false;
-    tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
-
-
+    // --- WEBSITE Department Logic ---
     const websiteCheckbox = document.getElementById('website');
     const websiteDeptDiv = document.getElementById('websiteDeptDiv');
 
