@@ -91,7 +91,7 @@ SOCIAL_API = {
         "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET"),
         "redirect_uri": os.getenv("LINKEDIN_REDIRECT_URI"),
         "tokens_file": "linkedin_tokens.json",  # local file for token storage
-        "organization_id": os.getenv("LINKEDIN_PERSON_ID")  # or ORG_ID if posting as company
+        "organization_id": os.getenv("LINKEDIN_ORGANIZATION_ID")  # or ORG_ID if posting as company
     },
     "tiktok": {
         "client_key": os.getenv("TIKTOK_CLIENT_KEY"),       # Your App ID
@@ -141,7 +141,7 @@ def create_slideshow(image_paths, output_path, duration_per_image=2, music_path=
     clips = [ImageClip(path).set_duration(duration_per_image).resize(height=720) for path in image_paths]
     video = concatenate_videoclips(clips, method="compose")
     if music_path and os.path.exists(music_path):
-        audio = AudioFileClip(music_path).volumex(0.2)
+        audio = AudioFileClip(music_path).volumex(0.4)
         video = video.set_audio(audio)
     video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
     return output_path
@@ -647,109 +647,28 @@ def tiktok_callback():
     save_tiktok_tokens(tokens)
     return "TikTok authorized successfully!"
 
-
-
-# --- LinkedIn token handling ---
-def save_linkedin_tokens(tokens):
-    with open(SOCIAL_API['linkedin']['tokens_file'], "w") as f:
-        json.dump(tokens, f, indent=4)
-
-def load_linkedin_tokens():
-    path = SOCIAL_API['linkedin']['tokens_file']
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            return json.load(f)
-    return None
-
-def get_linkedin_access_token():
-    tokens = load_linkedin_tokens()
-    if not tokens:
-        print("❌ No LinkedIn tokens found. Please login via /linkedin/login")
-        return None
-
-    expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
-    if datetime.now(timezone.utc) >= expires_at:
-        # Access token expired, try refresh
-        refresh_token = tokens.get("refresh_token")
-        if not refresh_token:
-            print("❌ No refresh token, reauthorize via /linkedin/login")
-            return None
-
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": SOCIAL_API['linkedin']['client_id'],
-            "client_secret": SOCIAL_API['linkedin']['client_secret']
-        }
-        r = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data)
-        if r.status_code != 200:
-            print("❌ Failed to refresh LinkedIn token:", r.text)
-            return None
-
-        resp_data = r.json()
-        tokens["access_token"] = resp_data["access_token"]
-        tokens["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=resp_data["expires_in"])).isoformat()
-        if "refresh_token" in resp_data:
-            tokens["refresh_token"] = resp_data["refresh_token"]
-        save_linkedin_tokens(tokens)
-        print("✅ LinkedIn token refreshed successfully")
-
-    return tokens["access_token"]
-
-def refresh_linkedin_token():
-    tokens = load_linkedin_tokens()
-    if not tokens:
-        print("❌ No LinkedIn tokens to refresh")
-        return
-
-    expires_at = datetime.fromisoformat(tokens["expires_at"])
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    # Refresh 1 hour before expiry
-    if datetime.now(timezone.utc) + timedelta(hours=1) >= expires_at:
-        refresh_token = tokens.get("refresh_token")
-        if not refresh_token:
-            print("❌ No refresh token, user needs to login again via /linkedin/login")
-            return
-
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": SOCIAL_API['linkedin']['client_id'],
-            "client_secret": SOCIAL_API['linkedin']['client_secret']
-        }
-        r = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data)
-        if r.status_code == 200:
-            resp_data = r.json()
-            tokens["access_token"] = resp_data["access_token"]
-            tokens["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=resp_data["expires_in"])).isoformat()
-            if "refresh_token" in resp_data:
-                tokens["refresh_token"] = resp_data["refresh_token"]
-            save_linkedin_tokens(tokens)
-            print("✅ LinkedIn token refreshed automatically")
-        else:
-            print("❌ Failed to refresh LinkedIn token:", r.text)
-
-# Schedule LinkedIn token refresh every 30 minutes
-scheduler.add_job(refresh_linkedin_token, 'interval', minutes=30)
-
-# --- Post LinkedIn org with title, description, 3 images ---
+#  linkedin posting to organization page
 def post_linkedin_org(title=None, description=None, image_paths=None):
+    status = linkedin_token_status()
+
+    # If token missing or expired → STOP and notify UI
+    if status in ["missing", "expired"]:
+        print("❌ LinkedIn token expired or missing. User must re-login.")
+        return {
+            "success": False,
+            "error": "expired_token"
+        }
+
     access_token = get_linkedin_access_token()
     if not access_token:
-        print("❌ No access token — visit /linkedin/login first")
-        return False
+        print("❌ LinkedIn token unavailable.")
+        return {
+            "success": False,
+            "error": "expired_token"
+        }
 
     org_urn = f"urn:li:organization:{SOCIAL_API['linkedin']['organization_id']}"
-
-    # Build post text (English only)
-    text = ""
-    if title and description:
-        text = f"{title}\n\n{description}"
-    elif title:
-        text = title
-    elif description:
-        text = description
+    text = (title or "") + ("\n\n" + description if description else "")
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -757,26 +676,11 @@ def post_linkedin_org(title=None, description=None, image_paths=None):
         "Content-Type": "application/json"
     }
 
-    # ---- Determine MIME type from file extension ----
-    def get_mime(path):
-        ext = os.path.splitext(path)[1].lower()
-        if ext in [".jpg", ".jpeg"]:
-            return "image/jpeg"
-        if ext == ".png":
-            return "image/png"
-        if ext == ".webp":
-            return "image/webp"
-        return "image/jpeg"   # default fallback
-
+    # Upload images
     assets = []
-
-    # ---- Upload images ----
     if image_paths:
         for path in image_paths[:8]:
-            mime = get_mime(path)
-
-            # Register upload request
-            reg_resp = requests.post(
+            reg = requests.post(
                 "https://api.linkedin.com/v2/assets?action=registerUpload",
                 headers=headers,
                 json={
@@ -793,40 +697,34 @@ def post_linkedin_org(title=None, description=None, image_paths=None):
                 }
             )
 
-            if reg_resp.status_code not in [200, 201]:
-                print("❌ Register upload failed:", reg_resp.text)
-                return False
+            if reg.status_code not in [200, 201]:
+                print("❌ LinkedIn register upload failed:", reg.text)
+                return {"success": False}
 
-            reg_data = reg_resp.json()
-
-            upload_url = reg_data["value"]["uploadMechanism"][
+            data = reg.json()
+            upload_url = data["value"]["uploadMechanism"][
                 "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
             ]["uploadUrl"]
 
-            asset_urn = reg_data["value"]["asset"]
+            asset_urn = data["value"]["asset"]
 
-            # Upload the actual image file
             with open(path, "rb") as f:
-                upload_headers = {
+                up = requests.put(upload_url, data=f, headers={
                     "Authorization": f"Bearer {access_token}",
-                    "Content-Type": mime
-                }
-                upload_resp = requests.put(upload_url, data=f, headers=upload_headers)
+                    "Content-Type": "image/jpeg"
+                })
 
-            if upload_resp.status_code not in [200, 201]:
-                print("❌ Image upload failed:", upload_resp.text)
-                return False
+            if up.status_code not in [200, 201]:
+                print("❌ LinkedIn image upload failed:", up.text)
+                return {"success": False}
 
-            # Add uploaded asset to media list
             assets.append({
                 "status": "READY",
                 "media": asset_urn,
                 "description": {"text": "Image"},
-                "title": {"text": os.path.basename(path)}
             })
 
-    # ---- Build final LinkedIn post JSON ----
-    post_data = {
+    payload = {
         "author": org_urn,
         "lifecycleState": "PUBLISHED",
         "specificContent": {
@@ -841,29 +739,95 @@ def post_linkedin_org(title=None, description=None, image_paths=None):
         }
     }
 
-    # ---- Create post ----
-    r = requests.post("https://api.linkedin.com/v2/ugcPosts", headers=headers, json=post_data)
+    r = requests.post("https://api.linkedin.com/v2/ugcPosts", headers=headers, json=payload)
 
     if r.status_code in [200, 201]:
-        print("✅ LinkedIn post created successfully!")
-        return True
-    else:
-        print("❌ LinkedIn post failed:", r.status_code, r.text)
-        return False
+        print("✅ LinkedIn post successful!")
+        return {"success": True}
 
-# LinkedIn OAuth login
+    print("❌ LinkedIn post failed:", r.text)
+    return {"success": False}
+
+
+# --- LinkedIn token helpers ---
+def save_linkedin_tokens(tokens):
+    with open(SOCIAL_API['linkedin']['tokens_file'], "w") as f:
+        json.dump(tokens, f, indent=4)
+
+
+def load_linkedin_tokens():
+    path = SOCIAL_API['linkedin']['tokens_file']
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    return None
+
+
+def linkedin_token_status():
+    """
+    Returns:
+        "missing" → no token file
+        "expired" → token expired
+        "warn"    → token <30 days left
+        "valid"   → token healthy
+    """
+    tokens = load_linkedin_tokens()
+    if not tokens:
+        return "missing"
+
+    expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+
+    # Already expired
+    if now >= expires_at:
+        return "expired"
+
+    # Less than 30 days left
+    if expires_at - now < timedelta(days=30):
+        return "warn"
+
+    return "valid"
+
+
+def get_linkedin_access_token():
+    """
+    Returns a valid access token, or None if expired.
+    Auto-redirect is handled in view functions.
+    """
+    tokens = load_linkedin_tokens()
+    if not tokens:
+        print("❌ No LinkedIn token found.")
+        return None
+
+    expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
+
+    if datetime.now(timezone.utc) >= expires_at:
+        print("❌ LinkedIn access token EXPIRED — re-login required")
+        return None
+
+    return tokens["access_token"]
+
+
+# ============================================================
+#                    🔵 LINKEDIN LOGIN ROUTES
+# ============================================================
+
 @app.route("/linkedin/login")
 def linkedin_login():
     client_id = SOCIAL_API['linkedin']['client_id']
     redirect_uri = SOCIAL_API['linkedin']['redirect_uri']
+
     scopes = "w_organization_social r_organization_social"
-    auth_url = (
+
+    url = (
         "https://www.linkedin.com/oauth/v2/authorization"
-        f"?response_type=code&client_id={client_id}"
+        f"?response_type=code"
+        f"&client_id={client_id}"
         f"&redirect_uri={requests.utils.requote_uri(redirect_uri)}"
         f"&scope={requests.utils.requote_uri(scopes)}"
     )
-    return redirect(auth_url)
+    return redirect(url)
+
 
 @app.route("/linkedin/callback")
 def linkedin_callback():
@@ -871,7 +835,7 @@ def linkedin_callback():
     if not code:
         return "No code received", 400
 
-    resp = requests.post(
+    response = requests.post(
         "https://www.linkedin.com/oauth/v2/accessToken",
         data={
             "grant_type": "authorization_code",
@@ -881,18 +845,45 @@ def linkedin_callback():
             "client_secret": SOCIAL_API['linkedin']['client_secret']
         }
     )
-    if resp.status_code != 200:
-        return f"Token exchange failed: {resp.text}", 400
-    data = resp.json()
+
+    if response.status_code != 200:
+        return f"Token exchange failed: {response.text}", 400
+
+    data = response.json()
+
+    # LinkedIn DOES NOT return refresh_token for organization posting
     tokens = {
         "access_token": data["access_token"],
-        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(data["expires_in"]))).isoformat()
+        "expires_at": (
+            datetime.now(timezone.utc) +
+            timedelta(seconds=int(data["expires_in"]))
+        ).isoformat(),
+        "refresh_token": None
     }
-    if "refresh_token" in data:
-        tokens["refresh_token"] = data["refresh_token"]
+
     save_linkedin_tokens(tokens)
     return "LinkedIn authorized successfully!"
 
+
+# ============================================================
+#                     🔵 TOKEN WARNING BANNER
+# ============================================================
+
+@app.context_processor
+def inject_linkedin_warning():
+    """
+    Injects a variable into every template:
+        linkedin_warning = None | "expired" | "warn"
+    """
+    status = linkedin_token_status()
+
+    if status == "warn":
+        return {"linkedin_warning": "LinkedIn token expires soon — reconnect soon!"}
+
+    if status == "expired":
+        return {"linkedin_warning": "LinkedIn token EXPIRED — please reconnect!"}
+
+    return {"linkedin_warning": None}
 
 
 def clean_input_text(text):
@@ -1060,7 +1051,7 @@ def post_all():
                     success = media_paths and post_instagram(ig_caption, media_paths[:10])
 
                 elif platform == "youtube":
-                    youtube_title = title or title_kh or "Update"
+                    youtube_title = title or title_kh
                     success = post_youtube(
                         youtube_title,
                         youtube_description,
@@ -1071,11 +1062,20 @@ def post_all():
                     ln_title = title or ""
                     ln_desc = desc or ""
 
-                    success = post_linkedin_org(
+                    result = post_linkedin_org(
                         ln_title,
                         ln_desc,
                         media_paths[:8]
                     )
+
+                    if result.get("error") == "expired_token":
+                        Failed.append("LinkedIn (Token Expired — Please Login)")
+
+                    elif result.get("success"):
+                        Done.append("LinkedIn")
+
+                    else:
+                        Failed.append("LinkedIn")
                     
                 elif platform == "tiktok":
                     success = (slideshow_path or media_paths) and post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
@@ -1213,5 +1213,5 @@ if __name__ == "__main__":
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
 

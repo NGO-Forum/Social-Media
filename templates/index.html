@@ -262,8 +262,7 @@
 
       const showKhmerInPreview =
         facebookCheckbox.checked ||
-        document.getElementById('youtube').checked ||
-        document.getElementById('linkedin').checked;
+        document.getElementById('youtube').checked;
 
       if (showKhmerInPreview) {
         khmerPreviewDiv.classList.remove('hidden');
@@ -351,7 +350,6 @@
       const showKhmer =
         facebookCheckbox.checked ||
         youtubeCheckbox.checked ||
-        linkedinCheckbox.checked;
 
       khmerTitleDiv.classList.toggle('hidden', !showKhmer);
       khmerDescDiv.classList.toggle('hidden', !showKhmer);
