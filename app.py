@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
+from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, afx
 from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from pytz import timezone as pytz_timezone
@@ -138,13 +138,42 @@ def logout():
 
 # --- Slideshow creator ---
 def create_slideshow(image_paths, output_path, duration_per_image=2, music_path=None):
-    clips = [ImageClip(path).set_duration(duration_per_image).resize(height=720) for path in image_paths]
+    # Create image clips
+    clips = [
+        ImageClip(path).set_duration(duration_per_image).resize(height=720)
+        for path in image_paths
+    ]
+
+    # Merge clips
     video = concatenate_videoclips(clips, method="compose")
+
+    # Add background music
     if music_path and os.path.exists(music_path):
-        audio = AudioFileClip(music_path).volumex(0.4)
+        audio = AudioFileClip(music_path).volumex(0.5)
+        audio = afx.audio_loop(audio, duration=video.duration)
         video = video.set_audio(audio)
-    video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
+
+    # Export
+    video.write_videofile(
+        output_path,
+        fps=24,
+        codec="libx264",
+        audio_codec="aac"
+    )
+
     return output_path
+
+# --- Get a static song from /static/music ---
+def get_static_song():
+    music_folder = os.path.join(app.root_path, "static", "music")
+    if not os.path.exists(music_folder):
+        return None
+
+    for f in os.listdir(music_folder):
+        if f.lower().endswith(".mp3"):
+            return os.path.join(music_folder, f)
+
+    return None
 
 
 # --- Website posting ---
@@ -984,7 +1013,14 @@ def post_all():
         if len(media_paths) > 1 and any(p in selected_platforms for p in ["youtube", "tiktok"]):
             slideshow_path = os.path.join(app.config['UPLOAD_FOLDER'], f"slideshow_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4")
             try:
-                slideshow_path = create_slideshow(media_paths, slideshow_path)
+                music_path = get_static_song()
+                slideshow_path = create_slideshow(
+                    media_paths,
+                    slideshow_path,
+                    duration_per_image=2,
+                    music_path=music_path
+                )
+
             except Exception as e:
                 print("❌ Failed to create slideshow:", e)
                 slideshow_path = None
