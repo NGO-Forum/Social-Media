@@ -17,6 +17,8 @@ from google.auth.transport.requests import Request
 from pathlib import Path
 from openai import OpenAI
 import time
+from urllib.parse import quote_plus
+import base64, hashlib
 
 # Fix for Pillow >= 10 / Python 3.13
 if not hasattr(Image, "ANTIALIAS"):
@@ -211,7 +213,7 @@ def post_facebook(title, desc, media_paths=None):
     token = SOCIAL_API['facebook']['access_token']
 
     try:
-        DOMAIN = "https://media.mengseu-student.site/uploads/"
+        DOMAIN = "https://media.ngoforum.site/uploads/"
 
         images = []
         video = None
@@ -315,7 +317,7 @@ def post_instagram(caption, media_paths=None):
             print("❌ Instagram requires media (image or video)")
             return False
 
-        DOMAIN = "https://media.mengseu-student.site/uploads/"
+        DOMAIN = "https://media.ngoforum.site/uploads/"
 
         # Separate images and videos
         images = []
@@ -555,7 +557,7 @@ def post_tiktok(title, desc, media_path):
     headers = {"Access-Token": access_token}
 
     # --- Upload video file ---
-    upload_url = "https://business-api.tiktokglobalshop.com/open_api/v1.3/media/upload/"
+    upload_url = "https://business-api.tiktok.com/open_api/v1.3/media/upload/"
     try:
         with open(media_path, "rb") as f:
             files = {"video_file": f}
@@ -571,7 +573,8 @@ def post_tiktok(title, desc, media_path):
             return False
 
         # --- Create the post ---
-        post_url = "https://business-api.tiktokglobalshop.com/open_api/v1.3/post/create/"
+        post_url = "https://business-api.tiktok.com/open_api/v1.3/post/create/"
+
         body = {
             "business_id": SOCIAL_API['tiktok']['business_id'],
             "video_id": media_id,
@@ -623,7 +626,8 @@ def get_tiktok_access_token():
             "grant_type": "refresh_token",
             "refresh_token": refresh_token
         }
-        r = requests.post("https://business-api.tiktokglobalshop.com/open_api/v1.3/oauth/refresh_token/", json=data)
+        r = requests.post("https://business-api.tiktok.com/open_api/v1.3/oauth/refresh_token/", json=data)
+
         if r.status_code != 200:
             print("❌ Failed to refresh TikTok token:", r.text)
             return None
@@ -638,43 +642,75 @@ def get_tiktok_access_token():
     return tokens["access_token"]
 
 
+def generate_pkce_pair():
+    code_verifier = base64.urlsafe_b64encode(os.urandom(40)).decode('utf-8').rstrip("=")
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode('utf-8')).digest()
+    ).decode('utf-8').rstrip("=")
+
+    return code_verifier, code_challenge
+
+
 # --- OAuth login ---
 @app.route("/tiktok/login")
 def tiktok_login():
     client_key = SOCIAL_API["tiktok"]["client_key"]
     redirect_uri = SOCIAL_API["tiktok"]["redirect_uri"]
-    scopes = "video.create video.list user.info.basic"
+
+    if not client_key:
+        return "TikTok client_key missing in environment", 500
+
+    if not redirect_uri:
+        return "TikTok redirect_uri missing in environment", 500
+
+    # PKCE
+    code_verifier, code_challenge = generate_pkce_pair()
+    session["tiktok_code_verifier"] = code_verifier
+
     auth_url = (
-        f"https://business-api.tiktokglobalshop.com/open_api/v1.3/oauth/authorize/"
-        f"?client_key={client_key}&response_type=code&scope={scopes}&redirect_uri={redirect_uri}"
+        "https://www.tiktok.com/v2/auth/authorize/"
+        f"?client_key={client_key}"
+        f"&response_type=code"
+        f"&scope={quote_plus('video.upload video.publish')}"
+        f"&redirect_uri={quote_plus(redirect_uri)}"
+        f"&state=ngof123"
+        f"&code_challenge={code_challenge}"
+        f"&code_challenge_method=S256"
     )
+
+    print("TikTok AUTH URL:", auth_url)  # Debug line
+
     return redirect(auth_url)
 
 @app.route("/tiktok/callback")
 def tiktok_callback():
+    error = request.args.get("error")
+    if error:
+        return f"TikTok error: {error}<br>{request.args}", 400
+
     code = request.args.get("code")
     if not code:
-        return "No code received", 400
+        return "No authorization code received", 400
 
-    data = {
+    code_verifier = session.get("tiktok_code_verifier")
+
+    payload = {
         "client_key": SOCIAL_API["tiktok"]["client_key"],
         "client_secret": SOCIAL_API["tiktok"]["client_secret"],
-        "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": SOCIAL_API["tiktok"]["redirect_uri"]
+        "grant_type": "authorization_code",
+        "redirect_uri": SOCIAL_API["tiktok"]["redirect_uri"],
+        "code_verifier": code_verifier
     }
-    r = requests.post("https://business-api.tiktokglobalshop.com/open_api/v1.3/oauth/token/", json=data)
-    if r.status_code != 200:
-        return f"Token exchange failed: {r.text}", 400
 
-    resp_data = r.json().get("data", {})
-    tokens = {
-        "access_token": resp_data["access_token"],
-        "refresh_token": resp_data.get("refresh_token"),
-        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(resp_data["expires_in"]))).isoformat()
-    }
-    save_tiktok_tokens(tokens)
+    r = requests.post("https://open.tiktokapis.com/v2/oauth/token/", json=payload)
+    print("Token exchange response:", r.text)
+
+    if r.status_code != 200:
+        return f"Token exchange failed:<br>{r.text}", 400
+
     return "TikTok authorized successfully!"
+
 
 #  linkedin posting to organization page
 def post_linkedin_org(title=None, description=None, image_paths=None):

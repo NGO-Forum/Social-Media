@@ -260,52 +260,62 @@
       titlePreview.textContent = titleInput.value;
       descPreview.textContent = descInput.value;
 
-      const showKhmerInPreview =
-        facebookCheckbox.checked ||
-        document.getElementById('youtube').checked;
+      const facebook = document.getElementById("facebook").checked;
+      const youtube = document.getElementById("youtube").checked;
+      const tiktok = document.getElementById("tiktok").checked;
+      const instagram = document.getElementById("instagram").checked;
+      const linkedin = document.getElementById("linkedin").checked;
+      const website = document.getElementById("website").checked;
+
+      // Khmer preview logic
+      const showKhmerInPreview = facebook || youtube || tiktok;
+      khmerPreviewDiv.classList.toggle("hidden", !showKhmerInPreview);
 
       if (showKhmerInPreview) {
-        khmerPreviewDiv.classList.remove('hidden');
         titleKhPreview.textContent = titleKhInput.value;
         descKhPreview.textContent = descKhInput.value;
-      } else {
-        khmerPreviewDiv.classList.add('hidden');
       }
 
+      // English preview logic
+      const showEnglishInPreview = facebook || youtube || instagram || linkedin || website;
+      document.getElementById("titlePreview").parentElement.classList.toggle("hidden", !showEnglishInPreview);
+      document.getElementById("descPreview").parentElement.classList.toggle("hidden", !showEnglishInPreview);
 
-      mediaPreview.innerHTML = '';
+      // Media preview (unchanged)
+      mediaPreview.innerHTML = "";
       filesArray.forEach((file, idx) => {
-        const container = document.createElement('div');
-        container.className = 'relative';
+        const container = document.createElement("div");
+        container.className = "relative";
 
-        if (file.type.startsWith('image')) {
-          const img = document.createElement('img');
+        if (file.type.startsWith("image")) {
+          const img = document.createElement("img");
           img.src = URL.createObjectURL(file);
-          img.className = 'w-full h-full object-cover rounded-lg';
+          img.className = "w-full h-full object-cover rounded-lg";
           container.appendChild(img);
-        } else if (file.type.startsWith('video')) {
-          const video = document.createElement('video');
+        } else if (file.type.startsWith("video")) {
+          const video = document.createElement("video");
           video.src = URL.createObjectURL(file);
-          video.className = 'w-full h-full object-cover rounded-lg';
+          video.className = "w-full h-full object-cover rounded-lg";
           video.controls = true;
           container.appendChild(video);
         }
 
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.innerHTML = '&times;';
-        removeBtn.className = 'absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm';
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.innerHTML = "&times;";
+        removeBtn.className =
+          "absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm";
         removeBtn.onclick = () => {
           filesArray.splice(idx, 1);
           updateInputFiles();
           updatePreview();
           toggleVideoPlatforms();
         };
+
         container.appendChild(removeBtn);
         mediaPreview.appendChild(container);
       });
 
-      // IMPORTANT ADD THIS
       toggleVideoPlatforms();
     }
 
@@ -343,21 +353,26 @@
     const khmerDescDiv = document.getElementById('khmerDescDiv');
 
     function toggleKhmerFields() {
-      const youtubeCheckbox = document.getElementById('youtube');
-      const linkedinCheckbox = document.getElementById('linkedin');
+      const facebook = document.getElementById('facebook').checked;
+      const youtube = document.getElementById('youtube').checked;
+      const tiktok = document.getElementById('tiktok').checked;
+      const instagram = document.getElementById('instagram').checked;
+      const linkedin = document.getElementById('linkedin').checked;
+      const website = document.getElementById('website').checked;
 
-      // Khmer should show for these platforms
-      const showKhmer =
-        facebookCheckbox.checked ||
-        youtubeCheckbox.checked ||
-
+      // Khmer fields condition
+      const showKhmer = facebook || youtube || tiktok;
       khmerTitleDiv.classList.toggle('hidden', !showKhmer);
       khmerDescDiv.classList.toggle('hidden', !showKhmer);
 
-      khmerPreviewDiv.classList.toggle('hidden', !showKhmer);
+      // English fields condition
+      const showEnglish = facebook || youtube || instagram || linkedin || website;
+      document.getElementById("titleInput").parentElement.classList.toggle("hidden", !showEnglish);
+      document.getElementById("descInput").parentElement.classList.toggle("hidden", !showEnglish);
 
       updatePreview();
     }
+
 
 
     // --- YouTube & TikTok Enable/Disable Logic --- //
