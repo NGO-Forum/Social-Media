@@ -1002,10 +1002,18 @@ def post_all():
     media_files = request.files.getlist("media[]")
     media_paths = []
     for file in media_files:
+        if not file or not file.filename:
+            continue  # skip empty file inputs
+
         filename = secure_filename(file.filename)
+
+        if filename == "":
+            continue
+
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(path)
         media_paths.append(path)
+
 
 
     # Build full text (Khmer + English)
