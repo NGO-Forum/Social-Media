@@ -5,7 +5,7 @@ import json
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 flow = InstalledAppFlow.from_client_secrets_file(
-    "API/client_secret_493794758447-v1nfelcn9kaf07t63kkmkar7uh2emvtq.apps.googleusercontent.com.json",
+    "API/client_secret_493794758447-69fi5dp9st0k7s2ds4v9799d298qbn71.apps.googleusercontent.com.json",
     SCOPES
 )
 
