@@ -32,7 +32,7 @@ app.secret_key = "@Riti#NGOF2025"
 
 
 # MySQL connection
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/media'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@media.ngoforum.site/media'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -1283,8 +1283,8 @@ def show_posts():
 
 
 if __name__ == "__main__":
-    # with app.app_context():
-    #     db.create_all()
+    with app.app_context():
+        db.create_all()
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
