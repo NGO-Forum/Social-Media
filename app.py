@@ -106,6 +106,7 @@ SOCIAL_API = {
 
 SCOPES_YOUTUBE = ["https://www.googleapis.com/auth/youtube.upload"]
 
+TIKTOK_TOKEN_FILE = SOCIAL_API["tiktok"]["tokens_file"]
 
 # --- Helper functions for login ---
 def login_required(func):
@@ -596,50 +597,53 @@ def post_tiktok(title, desc, media_path):
 
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
-    with open(SOCIAL_API["tiktok"]["tokens_file"], "w") as f:
+    with open(TIKTOK_TOKEN_FILE, "w") as f:
         json.dump(tokens, f, indent=4)
 
 def load_tiktok_tokens():
-    path = SOCIAL_API["tiktok"]["tokens_file"]
-    if os.path.exists(path):
-        with open(path, "r") as f:
+    if os.path.exists(TIKTOK_TOKEN_FILE):
+        with open(TIKTOK_TOKEN_FILE, "r") as f:
             return json.load(f)
     return None
 
 def get_tiktok_access_token():
     tokens = load_tiktok_tokens()
     if not tokens:
-        print("❌ No TikTok token found. Please login via /tiktok/login")
+        print("❌ TikTok not authorized. Visit /tiktok/login")
         return None
 
     expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
+
     if datetime.now(timezone.utc) >= expires_at:
-        # Refresh token
-        refresh_token = tokens.get("refresh_token")
-        if not refresh_token:
-            print("❌ No refresh token. Reauthorize via /tiktok/login")
-            return None
+        print("🔄 Refreshing TikTok token...")
 
-        data = {
-            "client_key": SOCIAL_API["tiktok"]["client_key"],
-            "client_secret": SOCIAL_API["tiktok"]["client_secret"],
+        refresh_url = "https://business-api.tiktok.com/open_api/v1.3/oauth/refresh_token/"
+        payload = {
+            "app_id": SOCIAL_API["tiktok"]["client_key"],
+            "secret": SOCIAL_API["tiktok"]["client_secret"],
             "grant_type": "refresh_token",
-            "refresh_token": refresh_token
+            "refresh_token": tokens["refresh_token"]
         }
-        r = requests.post("https://business-api.tiktok.com/open_api/v1.3/oauth/refresh_token/", json=data)
 
+        r = requests.post(refresh_url, json=payload)
         if r.status_code != 200:
-            print("❌ Failed to refresh TikTok token:", r.text)
+            print("❌ TikTok refresh failed:", r.text)
             return None
 
-        resp_data = r.json().get("data", {})
-        tokens["access_token"] = resp_data["access_token"]
-        tokens["refresh_token"] = resp_data["refresh_token"]
-        tokens["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=int(resp_data["expires_in"]))).isoformat()
+        data = r.json()["data"]
+        tokens = {
+            "access_token": data["access_token"],
+            "refresh_token": data["refresh_token"],
+            "expires_at": (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=int(data["expires_in"]))
+            ).isoformat()
+        }
         save_tiktok_tokens(tokens)
-        print("✅ TikTok token refreshed automatically")
+        print("✅ TikTok token refreshed")
 
     return tokens["access_token"]
+
 
 
 def generate_pkce_pair():
@@ -654,62 +658,47 @@ def generate_pkce_pair():
 # --- OAuth login ---
 @app.route("/tiktok/login")
 def tiktok_login():
-    client_key = SOCIAL_API["tiktok"]["client_key"]
-    redirect_uri = SOCIAL_API["tiktok"]["redirect_uri"]
-
-    if not client_key:
-        return "TikTok client_key missing in environment", 500
-
-    if not redirect_uri:
-        return "TikTok redirect_uri missing in environment", 500
-
-    # PKCE
-    code_verifier, code_challenge = generate_pkce_pair()
-    session["tiktok_code_verifier"] = code_verifier
-
     auth_url = (
-        "https://www.tiktok.com/v2/auth/authorize/"
-        f"?client_key={client_key}"
-        f"&response_type=code"
-        f"&scope={quote_plus('video.upload video.publish')}"
-        f"&redirect_uri={quote_plus(redirect_uri)}"
-        f"&state=ngof123"
-        f"&code_challenge={code_challenge}"
-        f"&code_challenge_method=S256"
+        "https://business-api.tiktok.com/open_api/v1.3/oauth/authorize/"
+        f"?app_id={SOCIAL_API['tiktok']['client_key']}"
+        f"&redirect_uri={quote_plus(SOCIAL_API['tiktok']['redirect_uri'])}"
+        "&state=ngof123"
     )
-
-    print("TikTok AUTH URL:", auth_url)  # Debug line
-
     return redirect(auth_url)
+
 
 @app.route("/tiktok/callback")
 def tiktok_callback():
-    error = request.args.get("error")
-    if error:
-        return f"TikTok error: {error}<br>{request.args}", 400
+    auth_code = request.args.get("auth_code")
+    if not auth_code:
+        return f"Missing auth_code: {request.args}", 400
 
-    code = request.args.get("code")
-    if not code:
-        return "No authorization code received", 400
-
-    code_verifier = session.get("tiktok_code_verifier")
-
+    token_url = "https://business-api.tiktok.com/open_api/v1.3/oauth/access_token/"
     payload = {
-        "client_key": SOCIAL_API["tiktok"]["client_key"],
-        "client_secret": SOCIAL_API["tiktok"]["client_secret"],
-        "code": code,
+        "app_id": SOCIAL_API["tiktok"]["client_key"],
+        "secret": SOCIAL_API["tiktok"]["client_secret"],
         "grant_type": "authorization_code",
-        "redirect_uri": SOCIAL_API["tiktok"]["redirect_uri"],
-        "code_verifier": code_verifier
+        "auth_code": auth_code,
+        "business_id": SOCIAL_API["tiktok"]["business_id"]
     }
 
-    r = requests.post("https://open.tiktokapis.com/v2/oauth/token/", json=payload)
-    print("Token exchange response:", r.text)
-
+    r = requests.post(token_url, json=payload)
     if r.status_code != 200:
         return f"Token exchange failed:<br>{r.text}", 400
 
-    return "TikTok authorized successfully!"
+    data = r.json()["data"]
+
+    save_tiktok_tokens({
+        "access_token": data["access_token"],
+        "refresh_token": data["refresh_token"],
+        "expires_at": (
+            datetime.now(timezone.utc)
+            + timedelta(seconds=int(data["expires_in"]))
+        ).isoformat()
+    })
+
+    return "✅ TikTok Business authorized successfully"
+
 
 
 #  linkedin posting to organization page
@@ -744,7 +733,7 @@ def post_linkedin_org(title=None, description=None, image_paths=None):
     # Upload images
     assets = []
     if image_paths:
-        for path in image_paths[:8]:
+        for path in image_paths[:9]:
             reg = requests.post(
                 "https://api.linkedin.com/v2/assets?action=registerUpload",
                 headers=headers,
@@ -1119,7 +1108,13 @@ def post_all():
             try:
                 success = False
                 if platform == "website":
-                    success = post_website(title, desc, media_paths, website_department, published_at)
+                    success = post_website(
+                        title,
+                        desc,
+                        media_paths[:10],
+                        website_department,
+                        published_at
+                    )
 
                 elif platform == "instagram":
                     ig_parts = []
@@ -1145,7 +1140,7 @@ def post_all():
                     result = post_linkedin_org(
                         ln_title,
                         ln_desc,
-                        media_paths[:8]
+                        media_paths[:9]
                     )
 
                     if result.get("error") == "expired_token":

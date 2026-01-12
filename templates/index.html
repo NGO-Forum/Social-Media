@@ -388,10 +388,14 @@
 
     function toggleVideoPlatforms() {
       const hasFourOrMoreMedia = filesArray.length >= 4;
+      const hasVideo = filesArray.some(file => file.type.startsWith("video"));
+
+      // Enable if 4+ media OR at least 1 video
+      const canEnable = hasFourOrMoreMedia || hasVideo;
 
       // ------------------ YouTube ------------------ //
-      youtubeCheckbox.disabled = !hasFourOrMoreMedia;
-      if (!hasFourOrMoreMedia) {
+      youtubeCheckbox.disabled = !canEnable;
+      if (!canEnable) {
         youtubeCheckbox.checked = false;
         youtubeCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
       } else {
@@ -399,14 +403,15 @@
       }
 
       // ------------------ TikTok ------------------ //
-      tiktokCheckbox.disabled = !hasFourOrMoreMedia;
-      if (!hasFourOrMoreMedia) {
+      tiktokCheckbox.disabled = !canEnable;
+      if (!canEnable) {
         tiktokCheckbox.checked = false;
         tiktokCheckbox.parentElement.classList.add('opacity-50', 'cursor-not-allowed');
       } else {
         tiktokCheckbox.parentElement.classList.remove('opacity-50', 'cursor-not-allowed');
       }
     }
+
 
     // --- WEBSITE Department Logic ---
     const websiteCheckbox = document.getElementById('website');
