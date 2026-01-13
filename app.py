@@ -32,7 +32,8 @@ app.secret_key = "@Riti#NGOF2025"
 
 
 # MySQL connection
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@media.ngoforum.site/media'
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@locahost/media'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:media2025@mysql_db/media'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -78,12 +79,12 @@ SOCIAL_API = {
         "access_secret": os.getenv("TWITTER_ACCESS_TOKEN_SECRET")
     },
     "facebook": {
-        "access_token": os.getenv("FB_PAGE_ACCESS_TOKEN"),
-        "page_id": os.getenv("FB_PAGE_ID")
+        "page_id": os.getenv("FB_PAGE_ID"),
+        "access_token": os.getenv("META_SYSTEM_TOKEN"),
     },
     "instagram": {
-        "access_token": os.getenv("INSTAGRAM_ACCESS_TOKEN"),
-        "instagram_id": os.getenv("INSTAGRAM_BUSINESS_ID")
+        "instagram_id": os.getenv("INSTAGRAM_BUSINESS_ID"),
+        "access_token": os.getenv("META_SYSTEM_TOKEN"),
     },
     "youtube": {
         "creds_file": "token.json"  # Keep as is if using YouTube OAuth
@@ -206,250 +207,185 @@ def post_website(title, desc, media_paths, department, published_at):
         print("❌ Website post error:", e)
         return False
 
+def split_media(media_paths):
+    images, videos = [], []
+    for p in media_paths or []:
+        ext = os.path.splitext(p)[1].lower()
+        if ext in [".jpg", ".jpeg", ".png", ".webp"]:
+            images.append(p)
+        elif ext in [".mp4", ".mov", ".mkv"]:
+            videos.append(p)
+    return images, videos
+
+
 
 # --- Facebook posting with multiple images or single video ---
-def post_facebook(title, desc, media_paths=None):
-    text = (title + "\n\n" if title else "") + (desc if desc else "")
-    page_id = SOCIAL_API['facebook']['page_id']
-    token = SOCIAL_API['facebook']['access_token']
+def post_facebook(title, desc, media_paths):
+    token = os.getenv("META_SYSTEM_TOKEN")
+    page_id = os.getenv("FB_PAGE_ID")
+    DOMAIN = "https://media.ngoforum.site/uploads/"
+    text = (title or "") + "\n\n" + (desc or "")
+
+    images, videos = split_media(media_paths)
 
     try:
-        DOMAIN = "https://media.ngoforum.site/uploads/"
+        # ---------------- VIDEO (PRIORITY) ----------------
+        if videos:
+            video = videos[0]
+            video_url = DOMAIN + os.path.basename(video)
 
-        images = []
-        video = None
+            r = requests.post(
+                f"https://graph.facebook.com/v19.0/{page_id}/videos",
+                data={
+                    "file_url": video_url,
+                    "description": text,
+                    "access_token": token
+                },
+                timeout=60
+            )
 
-        # Separate image vs video
-        if media_paths:
-            for path in media_paths:
-                ext = os.path.splitext(path)[1].lower()
-                if ext in ['.jpg', '.jpeg', '.png', '.gif']:
-                    images.append(path)
-                elif ext in ['.mp4', '.mov', '.avi', '.mkv']:
-                    video = path
+            print("FB VIDEO:", r.text)
+            return r.status_code in (200, 201)
 
-        attached_media_ids = []
+        # ---------------- IMAGES ----------------
+        media_ids = []
 
-        # ✅ Upload IMAGES using PUBLIC URL
         for img in images:
-            filename = os.path.basename(img)
-            image_url = DOMAIN + filename
+            img_url = DOMAIN + os.path.basename(img)
+            r = requests.post(
+                f"https://graph.facebook.com/v19.0/{page_id}/photos",
+                data={
+                    "url": img_url,
+                    "published": "false",
+                    "access_token": token
+                },
+                timeout=30
+            )
+            data = r.json()
+            if "id" not in data:
+                print("❌ FB image failed:", data)
+                return False
+            media_ids.append({"media_fbid": data["id"]})
 
-            print("Uploading FB Image URL:", image_url)
-
-            upload_url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
-            payload = {
-                "url": image_url,
-                "published": False,
-                "access_token": token
-            }
-
-            resp = requests.post(upload_url, data=payload)
-            data = resp.json()
-
-            if "id" in data:
-                attached_media_ids.append(data["id"])
-            else:
-                print("❌ FB image upload failed:", data)
-
-        # ✅ Publish IMAGE CAROUSEL
-        if attached_media_ids:
-            publish_url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
-            form = {
+        r = requests.post(
+            f"https://graph.facebook.com/v19.0/{page_id}/feed",
+            data={
                 "message": text,
+                "attached_media": json.dumps(media_ids),
                 "access_token": token
-            }
+            },
+            timeout=30
+        )
 
-            for i, media_id in enumerate(attached_media_ids):
-                form[f"attached_media[{i}][media_fbid]"] = media_id
-
-            publish_resp = requests.post(publish_url, data=form)
-            print("✅ Facebook image post:", publish_resp.text)
-
-            return publish_resp.status_code in [200, 201]
-
-        # --- Upload VIDEO using public URL ---
-        if video:
-            filename = os.path.basename(video)
-            video_url_public = DOMAIN + filename
-
-            print("Uploading FB Video URL:", video_url_public)
-
-            video_upload_url = f"https://graph.facebook.com/v19.0/{page_id}/videos"
-            payload = {
-                "file_url": video_url_public,
-                "description": text,
-                "access_token": token
-            }
-
-            resp = requests.post(video_upload_url, data=payload)
-
-            print("📌 Facebook Video Response:", resp.status_code, resp.text)
-
-            return resp.status_code in [200, 201]
-
-
-        # ✅ Text-only post
-        if not images and not video:
-            text_url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
-            data = {
-                "message": text,
-                "access_token": token
-            }
-            resp = requests.post(text_url, data=data)
-            print("✅ Facebook text post:", resp.text)
-            return resp.status_code in [200, 201]
-
-        return False
+        print("FB IMAGE POST:", r.text)
+        return r.status_code in (200, 201)
 
     except Exception as e:
-        print("❌ Facebook post exception:", e)
+        print("❌ Facebook error:", e)
         return False
 
 
 # --- Instagram posting (image OR video) ---
-def post_instagram(caption, media_paths=None):
+def post_instagram(caption, media_paths):
+    token = os.getenv("META_SYSTEM_TOKEN")
+    ig_id = os.getenv("INSTAGRAM_BUSINESS_ID")
+    DOMAIN = "https://media.ngoforum.site/uploads/"
+
+    images, videos = split_media(media_paths)
+
     try:
-        caption = caption or ""
-        ig_id = SOCIAL_API['instagram']['instagram_id']
-        token = SOCIAL_API['instagram']['access_token']
-
-        if not media_paths:
-            print("❌ Instagram requires media (image or video)")
-            return False
-
-        DOMAIN = "https://media.ngoforum.site/uploads/"
-
-        # Separate images and videos
-        images = []
-        videos = []
-
-        for path in media_paths:
-            ext = os.path.splitext(path)[1].lower()
-            if ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                images.append(path)
-            elif ext in [".mp4", ".mov", ".mkv"]:
-                videos.append(path)
-
-        # --- PRIORITY: If video exists → post video ---
+        # ---------------- VIDEO (REELS) ----------------
         if videos:
-            video_path = videos[0]
-            filename = os.path.basename(video_path)
-            video_url = DOMAIN + filename
+            video = videos[0]
+            video_url = DOMAIN + os.path.basename(video)
 
-            print("Uploading IG Video URL:", video_url)
-
-            # Step 1 — Create VIDEO media
-            create_url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
-            payload = {
-                "media_type": "VIDEO",
-                "video_url": video_url,
-                "caption": caption,
-                "access_token": token
-            }
-
-            resp = requests.post(create_url, data=payload)
-            data = resp.json()
-            print("IG Video Upload Response:", data)
-
+            r = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_id}/media",
+                data={
+                    "media_type": "VIDEO",
+                    "video_url": video_url,
+                    "caption": caption,
+                    "access_token": token
+                },
+                timeout=30
+            )
+            data = r.json()
             if "id" not in data:
-                print("❌ IG video upload failed:", data)
+                print("❌ IG video create failed:", data)
                 return False
 
             creation_id = data["id"]
 
-            # Step 2 — WAIT for processing
-            status = "IN_PROGRESS"
-            status_url = f"https://graph.facebook.com/v21.0/{creation_id}?fields=status_code&access_token={token}"
-
-            while status == "IN_PROGRESS":
+            # Poll status
+            while True:
                 time.sleep(3)
-                s = requests.get(status_url).json()
-                status = s.get("status_code", "IN_PROGRESS")
-                print("IG Video Status:", status)
+                s = requests.get(
+                    f"https://graph.facebook.com/v21.0/{creation_id}",
+                    params={"fields": "status_code", "access_token": token}
+                ).json()
 
+                status = s.get("status_code")
+                print("IG VIDEO STATUS:", status)
+
+                if status == "FINISHED":
+                    break
                 if status == "ERROR":
-                    print("❌ IG video processing failed:", s)
+                    print("❌ IG video processing error:", s)
                     return False
 
-            # Step 3 — publish video
-            publish_url = f"https://graph.facebook.com/v21.0/{ig_id}/media_publish"
-            publish_resp = requests.post(publish_url, data={
-                "creation_id": creation_id,
-                "access_token": token
-            })
+            r = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+                data={"creation_id": creation_id, "access_token": token}
+            )
 
-            print("IG Video Publish Response:", publish_resp.text)
-            return publish_resp.status_code in [200, 201]
+            print("IG VIDEO PUBLISH:", r.text)
+            return r.status_code in (200, 201)
 
-        # --- Otherwise: IMAGES (single or carousel) ---
-        uploaded_ids = []
+        # ---------------- IMAGE CAROUSEL ----------------
+        children = []
 
-        for path in images[:10]:
-            filename = os.path.basename(path)
-            image_url = DOMAIN + filename
-
-            payload = {
-                "image_url": image_url,
-                "caption": caption if len(uploaded_ids) == 0 else "",
-                "access_token": token
-            }
-
-            upload_url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
-            resp = requests.post(upload_url, data=payload)
-            data = resp.json()
-
+        for img in images[:10]:
+            img_url = DOMAIN + os.path.basename(img)
+            r = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_id}/media",
+                data={
+                    "image_url": img_url,
+                    "is_carousel_item": "true",
+                    "access_token": token
+                },
+                timeout=30
+            )
+            data = r.json()
             if "id" not in data:
-                print("❌ Instagram image upload failed:", data)
+                print("❌ IG image failed:", data)
                 return False
+            children.append(data["id"])
 
-            uploaded_ids.append(data["id"])
-
-        # --- Publish CAROUSEL ---
-        if len(uploaded_ids) > 1:
-            # Step 1 — Create carousel container
-            create_url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
-            create_payload = {
+        r = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_id}/media",
+            data={
                 "media_type": "CAROUSEL",
-                "children": uploaded_ids,
+                "children": ",".join(children),
                 "caption": caption,
                 "access_token": token
-            }
+            },
+            timeout=30
+        )
+        parent = r.json()
+        if "id" not in parent:
+            print("❌ IG carousel failed:", parent)
+            return False
 
-            create_resp = requests.post(create_url, data=create_payload)
-            create_data = create_resp.json()
-            print("IG Carousel Create Response:", create_data)
+        r = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+            data={"creation_id": parent["id"], "access_token": token}
+        )
 
-            if "id" not in create_data:
-                print("❌ Failed to create carousel parent:", create_data)
-                return False
-
-            carousel_id = create_data["id"]
-
-            # Step 2 — Publish carousel
-            publish_url = f"https://graph.facebook.com/v21.0/{ig_id}/media_publish"
-            publish_payload = {
-                "creation_id": carousel_id,
-                "access_token": token
-            }
-
-            publish_resp = requests.post(publish_url, data=publish_payload)
-            print("IG Carousel Publish Response:", publish_resp.text)
-            return publish_resp.status_code in [200, 201]
-
-        # --- Publish single image ---
-        publish_url = f"https://graph.facebook.com/v21.0/{ig_id}/media_publish"
-        publish_payload = {
-            "creation_id": uploaded_ids[0],
-            "access_token": token
-        }
-
-        publish_resp = requests.post(publish_url, data=publish_payload)
-        print("IG Publish Response:", publish_resp.text)
-        return publish_resp.status_code in [200, 201]
+        print("IG CAROUSEL PUBLISH:", r.text)
+        return r.status_code in (200, 201)
 
     except Exception as e:
-        print("⚠️ Instagram error:", e)
+        print("❌ Instagram error:", e)
         return False
 
 
