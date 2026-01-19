@@ -312,10 +312,11 @@ def post_instagram(caption, media_paths):
     images, videos = split_media(media_paths)
 
     try:
-        # ================= REELS / VIDEO =================
+        # ================= VIDEO / REELS =================
         if videos:
             video_url = DOMAIN + os.path.basename(videos[0])
 
+            # 1️⃣ Create media container
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media",
                 data={
@@ -333,7 +334,28 @@ def post_instagram(caption, media_paths):
 
             creation_id = data["id"]
 
-            # Publish
+            # 2️⃣ Poll processing status
+            while True:
+                time.sleep(3)
+
+                s = requests.get(
+                    f"https://graph.facebook.com/v21.0/{creation_id}",
+                    params={
+                        "fields": "status_code",
+                        "access_token": token
+                    }
+                ).json()
+
+                status = s.get("status_code")
+                print("⏳ IG VIDEO STATUS:", status)
+
+                if status == "FINISHED":
+                    break
+                if status == "ERROR":
+                    print("❌ IG video processing error:", s)
+                    return False
+
+            # 3️⃣ Publish
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
                 data={
@@ -348,7 +370,7 @@ def post_instagram(caption, media_paths):
         # ================= IMAGE CAROUSEL =================
         children = []
 
-        for img in images[:10]:  # IG limit = 10
+        for img in images[:10]:
             img_url = DOMAIN + os.path.basename(img)
 
             r = requests.post(
