@@ -71,39 +71,47 @@ for i in range(1, 10):  # supports up to 9 users, change if needed
         USERS[email] = generate_password_hash(password)
 
 
+import os
+
 SOCIAL_API = {
     "twitter": {
         "api_key": os.getenv("TWITTER_API_KEY"),
         "api_secret": os.getenv("TWITTER_API_SECRET_KEY"),
         "access_token": os.getenv("TWITTER_ACCESS_TOKEN"),
-        "access_secret": os.getenv("TWITTER_ACCESS_TOKEN_SECRET")
+        "access_secret": os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
     },
+
     "facebook": {
-        "page_id": os.getenv("FB_PAGE_ID"),
-        "access_token": os.getenv("META_SYSTEM_TOKEN"),
+        "page_id": os.getenv("META_PAGE_ID"),
+        "access_token": os.getenv("META_PAGE_TOKEN"),  # ✅ PAGE TOKEN
     },
+
     "instagram": {
-        "instagram_id": os.getenv("INSTAGRAM_BUSINESS_ID"),
-        "access_token": os.getenv("META_SYSTEM_TOKEN"),
+        "instagram_id": os.getenv("META_INSTAGRAM_BUSINESS_ID"),
+        "access_token": os.getenv("META_PAGE_TOKEN"),  # ✅ SAME PAGE TOKEN
     },
+
     "youtube": {
-        "creds_file": "token.json"  # Keep as is if using YouTube OAuth
+        "creds_file": "token.json"  # OAuth handled by Google
     },
+
     "linkedin": {
         "client_id": os.getenv("LINKEDIN_CLIENT_ID"),
         "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET"),
         "redirect_uri": os.getenv("LINKEDIN_REDIRECT_URI"),
-        "tokens_file": "linkedin_tokens.json",  # local file for token storage
-        "organization_id": os.getenv("LINKEDIN_ORGANIZATION_ID")  # or ORG_ID if posting as company
+        "organization_id": os.getenv("LINKEDIN_ORGANIZATION_ID"),
+        "tokens_file": "linkedin_tokens.json",
     },
+
     "tiktok": {
-        "client_key": os.getenv("TIKTOK_CLIENT_KEY"),       # Your App ID
-        "client_secret": os.getenv("TIKTOK_CLIENT_SECRET"), # Your App Secret
-        "redirect_uri": os.getenv("TIKTOK_REDIRECT_URI"),   # OAuth redirect URI
-        "business_id": os.getenv("TIKTOK_BUSINESS_ID"),     # TikTok business account ID
-        "tokens_file": "tiktok_tokens.json" 
-    }
+        "client_key": os.getenv("TIKTOK_CLIENT_KEY"),
+        "client_secret": os.getenv("TIKTOK_CLIENT_SECRET"),
+        "redirect_uri": os.getenv("TIKTOK_REDIRECT_URI"),
+        "business_id": os.getenv("TIKTOK_BUSINESS_ID"),
+        "tokens_file": "tiktok_tokens.json",
+    },
 }
+
 
 SCOPES_YOUTUBE = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -221,19 +229,21 @@ def split_media(media_paths):
 
 # --- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths):
-    token = os.getenv("META_SYSTEM_TOKEN")
-    page_id = os.getenv("FB_PAGE_ID")
+    token = os.getenv("META_PAGE_TOKEN")   # ✅ CORRECT
+    page_id = os.getenv("META_PAGE_ID")    # ✅ CORRECT
     DOMAIN = "https://media.ngoforum.site/uploads/"
-    text = (title or "") + "\n\n" + (desc or "")
 
+    if not token or not page_id:
+        print("❌ FB missing token or page_id")
+        return False
+
+    text = ((title or "") + "\n\n" + (desc or "")).strip()
     images, videos = split_media(media_paths)
 
     try:
-        # ---------------- VIDEO (PRIORITY) ----------------
+        # -------- VIDEO --------
         if videos:
-            video = videos[0]
-            video_url = DOMAIN + os.path.basename(video)
-
+            video_url = DOMAIN + os.path.basename(videos[0])
             r = requests.post(
                 f"https://graph.facebook.com/v19.0/{page_id}/videos",
                 data={
@@ -241,124 +251,88 @@ def post_facebook(title, desc, media_paths):
                     "description": text,
                     "access_token": token
                 },
-                timeout=60
+                timeout=120
             )
-
-            print("FB VIDEO:", r.text)
+            print("📌 FB VIDEO:", r.status_code, r.text)
             return r.status_code in (200, 201)
 
-        # ---------------- IMAGES ----------------
-        media_ids = []
+        # -------- IMAGES --------
+        attached_media = []
 
         for img in images:
             img_url = DOMAIN + os.path.basename(img)
+
             r = requests.post(
                 f"https://graph.facebook.com/v19.0/{page_id}/photos",
                 data={
                     "url": img_url,
-                    "published": "false",
+                    "published": True,   # ✅ BOOLEAN
                     "access_token": token
                 },
                 timeout=30
             )
+
+            print("📌 FB PHOTO:", r.status_code, r.text)
+
             data = r.json()
             if "id" not in data:
-                print("❌ FB image failed:", data)
                 return False
-            media_ids.append({"media_fbid": data["id"]})
+
+            attached_media.append({"media_fbid": data["id"]})
 
         r = requests.post(
             f"https://graph.facebook.com/v19.0/{page_id}/feed",
             data={
                 "message": text,
-                "attached_media": json.dumps(media_ids),
+                "attached_media": json.dumps(attached_media),
                 "access_token": token
             },
             timeout=30
         )
 
-        print("FB IMAGE POST:", r.text)
+        print("📌 FB FEED:", r.status_code, r.text)
         return r.status_code in (200, 201)
 
     except Exception as e:
-        print("❌ Facebook error:", e)
+        print("❌ Facebook exception:", e)
         return False
 
 
 # --- Instagram posting (image OR video) ---
 def post_instagram(caption, media_paths):
-    token = os.getenv("META_SYSTEM_TOKEN")
-    ig_id = os.getenv("INSTAGRAM_BUSINESS_ID")
+    token = os.getenv("META_PAGE_TOKEN")                 # ✅ PAGE TOKEN
+    ig_id = os.getenv("META_INSTAGRAM_BUSINESS_ID")     # ✅ CORRECT KEY
     DOMAIN = "https://media.ngoforum.site/uploads/"
+
+    if not token or not ig_id:
+        print("❌ IG missing token or ig_id")
+        return False
 
     images, videos = split_media(media_paths)
 
     try:
-        # ---------------- VIDEO (REELS) ----------------
-        if videos:
-            video = videos[0]
-            video_url = DOMAIN + os.path.basename(video)
-
-            r = requests.post(
-                f"https://graph.facebook.com/v21.0/{ig_id}/media",
-                data={
-                    "media_type": "VIDEO",
-                    "video_url": video_url,
-                    "caption": caption,
-                    "access_token": token
-                },
-                timeout=30
-            )
-            data = r.json()
-            if "id" not in data:
-                print("❌ IG video create failed:", data)
-                return False
-
-            creation_id = data["id"]
-
-            # Poll status
-            while True:
-                time.sleep(3)
-                s = requests.get(
-                    f"https://graph.facebook.com/v21.0/{creation_id}",
-                    params={"fields": "status_code", "access_token": token}
-                ).json()
-
-                status = s.get("status_code")
-                print("IG VIDEO STATUS:", status)
-
-                if status == "FINISHED":
-                    break
-                if status == "ERROR":
-                    print("❌ IG video processing error:", s)
-                    return False
-
-            r = requests.post(
-                f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
-                data={"creation_id": creation_id, "access_token": token}
-            )
-
-            print("IG VIDEO PUBLISH:", r.text)
-            return r.status_code in (200, 201)
-
-        # ---------------- IMAGE CAROUSEL ----------------
+        # -------- IMAGE CAROUSEL --------
         children = []
 
         for img in images[:10]:
             img_url = DOMAIN + os.path.basename(img)
+
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media",
                 data={
                     "image_url": img_url,
-                    "is_carousel_item": "true",
+                    "is_carousel_item": True,
                     "access_token": token
                 },
                 timeout=30
             )
+
+            print("📌 IG IMAGE:", r.status_code, r.text)
+
             data = r.json()
             if "id" not in data:
-                print("❌ IG image failed:", data)
                 return False
+
             children.append(data["id"])
 
         r = requests.post(
@@ -371,17 +345,20 @@ def post_instagram(caption, media_paths):
             },
             timeout=30
         )
+
         parent = r.json()
         if "id" not in parent:
-            print("❌ IG carousel failed:", parent)
             return False
 
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
-            data={"creation_id": parent["id"], "access_token": token}
+            data={
+                "creation_id": parent["id"],
+                "access_token": token
+            }
         )
 
-        print("IG CAROUSEL PUBLISH:", r.text)
+        print("📌 IG PUBLISH:", r.status_code, r.text)
         return r.status_code in (200, 201)
 
     except Exception as e:
