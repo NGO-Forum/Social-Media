@@ -229,26 +229,26 @@ def split_media(media_paths):
 
 # --- Facebook posting with multiple images or single video ---
 def post_facebook(title, desc, media_paths):
-    token = os.getenv("META_PAGE_TOKEN")   # ✅ CORRECT
-    page_id = os.getenv("META_PAGE_ID")    # ✅ CORRECT
+    token = os.getenv("META_PAGE_TOKEN")      # PAGE access token
+    page_id = os.getenv("META_PAGE_ID")
     DOMAIN = "https://media.ngoforum.site/uploads/"
 
     if not token or not page_id:
         print("❌ FB missing token or page_id")
         return False
 
-    text = ((title or "") + "\n\n" + (desc or "")).strip()
+    message = ((title or "") + "\n\n" + (desc or "")).strip()
     images, videos = split_media(media_paths)
 
     try:
-        # -------- VIDEO --------
+        # ================= VIDEO =================
         if videos:
             video_url = DOMAIN + os.path.basename(videos[0])
             r = requests.post(
                 f"https://graph.facebook.com/v19.0/{page_id}/videos",
                 data={
                     "file_url": video_url,
-                    "description": text,
+                    "description": message,
                     "access_token": token
                 },
                 timeout=120
@@ -256,17 +256,17 @@ def post_facebook(title, desc, media_paths):
             print("📌 FB VIDEO:", r.status_code, r.text)
             return r.status_code in (200, 201)
 
-        # -------- IMAGES --------
+        # ================= MULTI IMAGE =================
         attached_media = []
 
-        for img in images:
+        for img in images[:30]:  # FB limit = 30
             img_url = DOMAIN + os.path.basename(img)
 
             r = requests.post(
                 f"https://graph.facebook.com/v19.0/{page_id}/photos",
                 data={
                     "url": img_url,
-                    "published": True,   # ✅ BOOLEAN
+                    "published": "false",   # 🔴 MUST BE false
                     "access_token": token
                 },
                 timeout=30
@@ -280,10 +280,11 @@ def post_facebook(title, desc, media_paths):
 
             attached_media.append({"media_fbid": data["id"]})
 
+        # Publish feed post
         r = requests.post(
             f"https://graph.facebook.com/v19.0/{page_id}/feed",
             data={
-                "message": text,
+                "message": message,
                 "attached_media": json.dumps(attached_media),
                 "access_token": token
             },
@@ -300,8 +301,8 @@ def post_facebook(title, desc, media_paths):
 
 # --- Instagram posting (image OR video) ---
 def post_instagram(caption, media_paths):
-    token = os.getenv("META_PAGE_TOKEN")                 # ✅ PAGE TOKEN
-    ig_id = os.getenv("META_INSTAGRAM_BUSINESS_ID")     # ✅ CORRECT KEY
+    token = os.getenv("META_PAGE_TOKEN")
+    ig_id = os.getenv("META_INSTAGRAM_BUSINESS_ID")
     DOMAIN = "https://media.ngoforum.site/uploads/"
 
     if not token or not ig_id:
@@ -311,26 +312,57 @@ def post_instagram(caption, media_paths):
     images, videos = split_media(media_paths)
 
     try:
-        # -------- IMAGE CAROUSEL --------
+        # ================= REELS / VIDEO =================
+        if videos:
+            video_url = DOMAIN + os.path.basename(videos[0])
+
+            r = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_id}/media",
+                data={
+                    "media_type": "REELS",
+                    "video_url": video_url,
+                    "caption": caption,
+                    "access_token": token
+                }
+            )
+
+            data = r.json()
+            if "id" not in data:
+                print("❌ IG video create failed:", data)
+                return False
+
+            creation_id = data["id"]
+
+            # Publish
+            r = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+                data={
+                    "creation_id": creation_id,
+                    "access_token": token
+                }
+            )
+
+            print("📌 IG REEL:", r.status_code, r.text)
+            return r.status_code in (200, 201)
+
+        # ================= IMAGE CAROUSEL =================
         children = []
 
-        for img in images[:10]:
+        for img in images[:10]:  # IG limit = 10
             img_url = DOMAIN + os.path.basename(img)
 
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media",
                 data={
                     "image_url": img_url,
-                    "is_carousel_item": True,
+                    "is_carousel_item": "true",
                     "access_token": token
-                },
-                timeout=30
+                }
             )
-
-            print("📌 IG IMAGE:", r.status_code, r.text)
 
             data = r.json()
             if "id" not in data:
+                print("❌ IG image failed:", data)
                 return False
 
             children.append(data["id"])
@@ -342,12 +374,12 @@ def post_instagram(caption, media_paths):
                 "children": ",".join(children),
                 "caption": caption,
                 "access_token": token
-            },
-            timeout=30
+            }
         )
 
         parent = r.json()
         if "id" not in parent:
+            print("❌ IG carousel failed:", parent)
             return False
 
         r = requests.post(
@@ -358,7 +390,7 @@ def post_instagram(caption, media_paths):
             }
         )
 
-        print("📌 IG PUBLISH:", r.status_code, r.text)
+        print("📌 IG CAROUSEL:", r.status_code, r.text)
         return r.status_code in (200, 201)
 
     except Exception as e:
