@@ -1156,17 +1156,16 @@ def post_all():
 
                     print("🎬 YT MEDIA:", youtube_media)
 
-                    success = post_youtube(
+                    result = post_youtube(
                         youtube_title,
                         youtube_description,
                         youtube_media
                     )
-
-                    if success:
+                    if result:
                         Done.append("YouTube")
                     else:
                         Failed.append("YouTube")
-
+                    continue
 
 
                 elif platform == "linkedin":
@@ -1179,23 +1178,20 @@ def post_all():
                         media_paths[:9]
                     )
 
-                    if result.get("error") == "expired_token":
-                        Failed.append("LinkedIn (Token Expired — Please Login)")
-
-                    elif result.get("success"):
+                    if result.get("success"):
                         Done.append("LinkedIn")
-
                     else:
                         Failed.append("LinkedIn")
+                    continue
+
                     
                 elif platform == "tiktok":
                     success = (slideshow_path or media_paths) and post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
 
-                if platform not in ["youtube", "linkedin"]:
-                    if success:
-                        Done.append(platform.capitalize())
-                    else:
-                        Failed.append(platform.capitalize())
+                if success:
+                    Done.append(platform.capitalize())
+                else:
+                    Failed.append(platform.capitalize())
 
             except Exception as e:
                 print(f"❌ {platform} post failed:", e)
