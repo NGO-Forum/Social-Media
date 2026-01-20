@@ -312,7 +312,9 @@ def post_instagram(caption, media_paths):
     images, videos = split_media(media_paths)
 
     try:
-        # ================= VIDEO / REELS =================
+        # =====================================================
+        # 🎬 VIDEO / REELS
+        # =====================================================
         if videos:
             video_url = DOMAIN + os.path.basename(videos[0])
 
@@ -323,8 +325,10 @@ def post_instagram(caption, media_paths):
                     "media_type": "REELS",
                     "video_url": video_url,
                     "caption": caption,
+                    "share_to_feed": "true",
                     "access_token": token
-                }
+                },
+                timeout=30
             )
 
             data = r.json()
@@ -343,14 +347,17 @@ def post_instagram(caption, media_paths):
                     params={
                         "fields": "status_code",
                         "access_token": token
-                    }
+                    },
+                    timeout=30
                 ).json()
 
                 status = s.get("status_code")
                 print("⏳ IG VIDEO STATUS:", status)
 
                 if status == "FINISHED":
+                    time.sleep(2)  # extra safety wait
                     break
+
                 if status == "ERROR":
                     print("❌ IG video processing error:", s)
                     return False
@@ -361,13 +368,22 @@ def post_instagram(caption, media_paths):
                 data={
                     "creation_id": creation_id,
                     "access_token": token
-                }
+                },
+                timeout=30
             )
 
-            print("📌 IG REEL:", r.status_code, r.text)
-            return r.status_code in (200, 201)
+            resp = r.json()
+            print("📌 IG REEL:", r.status_code, resp)
 
-        # ================= IMAGE CAROUSEL =================
+            if "id" not in resp:
+                print("❌ IG reel publish failed:", resp)
+                return False
+
+            return True
+
+        # =====================================================
+        # 🖼 IMAGE CAROUSEL
+        # =====================================================
         children = []
 
         for img in images[:10]:
@@ -379,16 +395,22 @@ def post_instagram(caption, media_paths):
                     "image_url": img_url,
                     "is_carousel_item": "true",
                     "access_token": token
-                }
+                },
+                timeout=30
             )
 
             data = r.json()
             if "id" not in data:
-                print("❌ IG image failed:", data)
+                print("❌ IG image create failed:", data)
                 return False
 
             children.append(data["id"])
 
+        if not children:
+            print("❌ No valid Instagram media found")
+            return False
+
+        # Create carousel parent
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media",
             data={
@@ -396,29 +418,37 @@ def post_instagram(caption, media_paths):
                 "children": ",".join(children),
                 "caption": caption,
                 "access_token": token
-            }
+            },
+            timeout=30
         )
 
         parent = r.json()
         if "id" not in parent:
-            print("❌ IG carousel failed:", parent)
+            print("❌ IG carousel parent failed:", parent)
             return False
 
+        # Publish carousel
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
             data={
                 "creation_id": parent["id"],
                 "access_token": token
-            }
+            },
+            timeout=30
         )
 
-        print("📌 IG CAROUSEL:", r.status_code, r.text)
-        return r.status_code in (200, 201)
+        resp = r.json()
+        print("📌 IG CAROUSEL:", r.status_code, resp)
+
+        if "id" not in resp:
+            print("❌ IG carousel publish failed:", resp)
+            return False
+
+        return True
 
     except Exception as e:
-        print("❌ Instagram error:", e)
+        print("❌ Instagram exception:", str(e))
         return False
-
 
 #--- YouTube token refresh ---
 def refresh_youtube_token():
@@ -1089,7 +1119,13 @@ def post_all():
                         ig_parts.append(title)
                     if desc:
                         ig_parts.append(desc)
-                    ig_caption = "\n\n".join(ig_parts)
+
+                    ig_caption = "\n\n".join(ig_parts).strip()
+
+                    if not ig_caption:
+                        print("❌ Instagram skipped: English caption is empty")
+                        Failed.append("Instagram (English text required)")
+                        continue
                     success = media_paths and post_instagram(ig_caption, media_paths[:10])
 
                 elif platform == "youtube":
