@@ -1135,13 +1135,26 @@ def post_all():
                     success = post_instagram(ig_caption, media_paths[:10])
 
                 elif platform == "youtube":
-                    if not media_paths and not slideshow_path:
-                        print("❌ YouTube skipped: No media provided")
-                        Failed.append("YouTube (No media)")
+                    youtube_title = title or title_kh or "Video"
+
+                    youtube_media = None
+
+                    # Prefer slideshow video
+                    if slideshow_path and os.path.exists(slideshow_path):
+                        youtube_media = slideshow_path
+
+                    # Otherwise accept ONLY real video files
+                    elif media_paths:
+                        ext = os.path.splitext(media_paths[0])[1].lower()
+                        if ext in [".mp4", ".mov", ".mkv"]:
+                            youtube_media = media_paths[0]
+
+                    if not youtube_media:
+                        print("❌ YouTube skipped: No valid video")
+                        Failed.append("YouTube (Video required)")
                         continue
 
-                    youtube_title = title or title_kh or "Video"
-                    youtube_media = slideshow_path if slideshow_path else media_paths[0]
+                    print("🎬 YT MEDIA:", youtube_media)
 
                     success = post_youtube(
                         youtube_title,
@@ -1153,6 +1166,7 @@ def post_all():
                         Done.append("YouTube")
                     else:
                         Failed.append("YouTube")
+
 
 
                 elif platform == "linkedin":
@@ -1271,7 +1285,7 @@ def post_all():
             Swal.fire({
                 icon: 'warning',
                 title: 'Nothing was posted',
-                text: 'All selected platforms failed or were skipped.'
+                text: 'All selected platforms failed or were skipped.',
                 confirmButtonColor: '#f39c12'
             }).then(() => { window.location.href = '/'; });
         {% endraw %}
