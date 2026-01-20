@@ -1126,7 +1126,13 @@ def post_all():
                         print("❌ Instagram skipped: English caption is empty")
                         Failed.append("Instagram (English text required)")
                         continue
-                    success = media_paths and post_instagram(ig_caption, media_paths[:10])
+
+                    if not media_paths:
+                        print("❌ Instagram skipped: No media")
+                        Failed.append("Instagram (No media)")
+                        continue
+
+                    success = post_instagram(ig_caption, media_paths[:10])
 
                 elif platform == "youtube":
                     youtube_title = title or title_kh
