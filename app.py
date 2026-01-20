@@ -312,7 +312,7 @@ def post_instagram(caption, media_paths):
     images, videos = split_media(media_paths)
 
     # =====================================================
-    # 🖼 SINGLE IMAGE
+    # 🖼 SINGLE IMAGE (NO PROCESSING DELAY)
     # =====================================================
     if len(images) == 1 and not videos:
         img_url = DOMAIN + os.path.basename(images[0])
@@ -370,8 +370,8 @@ def post_instagram(caption, media_paths):
 
             creation_id = data["id"]
 
-            # ⏳ Poll video processing (max ~2 minutes)
-            for _ in range(40):
+            # ⏳ Wait until video is processed
+            for _ in range(40):  # ~2 minutes
                 time.sleep(3)
                 s = requests.get(
                     f"https://graph.facebook.com/v21.0/{creation_id}",
@@ -394,6 +394,7 @@ def post_instagram(caption, media_paths):
                 print("❌ IG video timeout")
                 return False
 
+            # Publish video
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
                 data={
@@ -407,7 +408,7 @@ def post_instagram(caption, media_paths):
             return r.status_code in (200, 201)
 
         # =====================================================
-        # 🖼 IMAGE CAROUSEL (≥2 images ONLY)
+        # 🖼 IMAGE CAROUSEL (≥2 IMAGES)
         # =====================================================
         if len(images) < 2:
             print("❌ IG carousel requires at least 2 images")
@@ -456,7 +457,7 @@ def post_instagram(caption, media_paths):
         parent_id = parent["id"]
 
         # 3️⃣ Wait for carousel processing
-        for _ in range(20):
+        for _ in range(20):  # ~60s
             time.sleep(3)
             s = requests.get(
                 f"https://graph.facebook.com/v21.0/{parent_id}",
@@ -479,18 +480,35 @@ def post_instagram(caption, media_paths):
             print("❌ IG carousel timeout")
             return False
 
-        # 4️⃣ Publish carousel
-        r = requests.post(
-            f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
-            data={
-                "creation_id": parent_id,
-                "access_token": token
-            },
-            timeout=30
-        )
+        # 4️⃣ Publish carousel (RETRY FIX – REQUIRED)
+        for attempt in range(5):
+            r = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+                data={
+                    "creation_id": parent_id,
+                    "access_token": token
+                },
+                timeout=30
+            )
 
-        print("📌 IG CAROUSEL PUBLISH:", r.status_code, r.text)
-        return r.status_code in (200, 201)
+            print(f"📌 IG CAROUSEL PUBLISH ATTEMPT {attempt+1}:", r.status_code, r.text)
+
+            if r.status_code in (200, 201):
+                return True
+
+            data = r.json()
+            error = data.get("error", {})
+
+            # Meta timing bug → retry
+            if error.get("code") == 9007:
+                time.sleep(5)
+                continue
+
+            # Any other error → stop
+            return False
+
+        print("❌ IG carousel publish failed after retries")
+        return False
 
     except Exception as e:
         print("❌ Instagram exception:", str(e))
