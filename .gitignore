@@ -1,7 +1,7 @@
 shadow.py
 *.txt
 token.json
-API/client_secret_*.json
+API/client_secret.json
 .env
 uploads/
 linkedin_tokens.json
