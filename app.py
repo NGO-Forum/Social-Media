@@ -1135,12 +1135,25 @@ def post_all():
                     success = post_instagram(ig_caption, media_paths[:10])
 
                 elif platform == "youtube":
-                    youtube_title = title or title_kh
+                    if not media_paths and not slideshow_path:
+                        print("❌ YouTube skipped: No media provided")
+                        Failed.append("YouTube (No media)")
+                        continue
+
+                    youtube_title = title or title_kh or "Video"
+                    youtube_media = slideshow_path if slideshow_path else media_paths[0]
+
                     success = post_youtube(
                         youtube_title,
                         youtube_description,
-                        slideshow_path or media_paths[0]
+                        youtube_media
                     )
+
+                    if success:
+                        Done.append("YouTube")
+                    else:
+                        Failed.append("YouTube")
+
 
                 elif platform == "linkedin":
                     ln_title = title or ""
@@ -1257,8 +1270,8 @@ def post_all():
         {% raw %}
             Swal.fire({
                 icon: 'warning',
-                title: 'No platforms selected!',
-                text: 'Please choose at least one platform to post to.',
+                title: 'Nothing was posted',
+                text: 'All selected platforms failed or were skipped.'
                 confirmButtonColor: '#f39c12'
             }).then(() => { window.location.href = '/'; });
         {% endraw %}
