@@ -1191,10 +1191,11 @@ def post_all():
                 elif platform == "tiktok":
                     success = (slideshow_path or media_paths) and post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
 
-                if success:
-                    Done.append(platform.capitalize())
-                else:
-                    Failed.append(platform.capitalize())
+                if platform not in ["youtube", "linkedin"]:
+                    if success:
+                        Done.append(platform.capitalize())
+                    else:
+                        Failed.append(platform.capitalize())
 
             except Exception as e:
                 print(f"❌ {platform} post failed:", e)
