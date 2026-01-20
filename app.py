@@ -1038,141 +1038,103 @@ def post_all():
     def do_post(post_obj):
         Done, Failed = [], []
 
-        # Create slideshow for YouTube/TikTok if multiple images
+        # -----------------------------
+        # Build YouTube description
+        # -----------------------------
+        yt_parts = []
+        if title_kh: yt_parts.append(title_kh)
+        if desc_kh: yt_parts.append(desc_kh)
+        if title: yt_parts.append(title)
+        if desc: yt_parts.append(desc)
+        youtube_description = "\n\n".join(yt_parts).strip()
+
+        # -----------------------------
+        # Create slideshow if needed
+        # -----------------------------
         slideshow_path = None
         if len(media_paths) > 1 and any(p in selected_platforms for p in ["youtube", "tiktok"]):
-            slideshow_path = os.path.join(app.config['UPLOAD_FOLDER'], f"slideshow_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4")
+            slideshow_path = os.path.join(
+                app.config["UPLOAD_FOLDER"],
+                f"slideshow_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+            )
             try:
-                music_path = get_static_song()
                 slideshow_path = create_slideshow(
                     media_paths,
                     slideshow_path,
                     duration_per_image=2,
-                    music_path=music_path
+                    music_path=get_static_song()
                 )
-
             except Exception as e:
-                print("❌ Failed to create slideshow:", e)
+                print("❌ Slideshow error:", e)
                 slideshow_path = None
 
-        # --- Facebook: use English + Khmer together ---
+        # ==================================================
+        # 1️⃣ INSTAGRAM FIRST
+        # ==================================================
+        if "instagram" in selected_platforms:
+            ig_caption = "\n\n".join(filter(None, [title, desc])).strip()
+
+            if ig_caption and media_paths:
+                ig_ok = post_instagram(ig_caption, media_paths[:10])
+                if ig_ok:
+                    Done.append("Instagram")
+                else:
+                    Failed.append("Instagram")
+            else:
+                Failed.append("Instagram (Missing caption or media)")
+
+            # 🔒 REQUIRED DELAY
+            time.sleep(10)
+
+        # ==================================================
+        # 2️⃣ FACEBOOK SECOND
+        # ==================================================
         if "facebook" in selected_platforms:
-            fb_title = ""  # Facebook mainly uses description
-            fb_desc_parts = []
+            fb_parts = []
+            if title_kh: fb_parts.append(title_kh)
+            if desc_kh: fb_parts.append(desc_kh)
+            if title: fb_parts.append(title)
+            if desc: fb_parts.append(desc)
 
-            # Add Khmer first
-            if title_kh:
-                fb_desc_parts.append(title_kh)
-            if desc_kh:
-                fb_desc_parts.append(desc_kh)
+            fb_desc = "\n\n".join(fb_parts)
 
-            # Add English after Khmer
-            if title:
-                fb_desc_parts.append(title)
-            if desc:
-                fb_desc_parts.append(desc)
-
-            fb_desc = "\n\n".join(fb_desc_parts)  # Join all parts with line breaks
-
-            success = post_facebook(fb_title, fb_desc, media_paths if media_paths else None)
-            if success:
+            fb_ok = post_facebook("", fb_desc, media_paths)
+            if fb_ok:
                 Done.append("Facebook")
             else:
                 Failed.append("Facebook")
 
-        # Build YouTube description (Khmer + English together)
-        yt_desc_parts = []
+        # ==================================================
+        # 3️⃣ WEBSITE
+        # ==================================================
+        if "website" in selected_platforms:
+            ok = post_website(title, desc, media_paths[:10], website_department, published_at)
+            Done.append("Website") if ok else Failed.append("Website")
 
-        # Khmer first
-        if title_kh:
-            yt_desc_parts.append(title_kh)
-        if desc_kh:
-            yt_desc_parts.append(desc_kh)
+        # ==================================================
+        # 4️⃣ YOUTUBE
+        # ==================================================
+        if "youtube" in selected_platforms:
+            ok = post_youtube(title or title_kh, youtube_description, slideshow_path or media_paths[0])
+            Done.append("YouTube") if ok else Failed.append("YouTube")
 
-        # English
-        if title:
-            yt_desc_parts.append(title)
-        if desc:
-            yt_desc_parts.append(desc)
+        # ==================================================
+        # 5️⃣ LINKEDIN
+        # ==================================================
+        if "linkedin" in selected_platforms:
+            result = post_linkedin_org(title or "", desc or "", media_paths[:9])
+            if result.get("success"):
+                Done.append("LinkedIn")
+            else:
+                Failed.append("LinkedIn")
 
-        youtube_description = "\n\n".join(yt_desc_parts)
+        # ==================================================
+        # 6️⃣ TIKTOK
+        # ==================================================
+        if "tiktok" in selected_platforms:
+            ok = post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
+            Done.append("TikTok") if ok else Failed.append("TikTok")
 
-
-
-        for platform in selected_platforms:
-            if platform == "facebook":
-                continue
-            try:
-                success = False
-                if platform == "website":
-                    success = post_website(
-                        title,
-                        desc,
-                        media_paths[:10],
-                        website_department,
-                        published_at
-                    )
-
-                elif "instagram" in selected_platforms:
-                    ig_parts = []
-                    if title:
-                        ig_parts.append(title)
-                    if desc:
-                        ig_parts.append(desc)
-
-                    ig_caption = "\n\n".join(ig_parts).strip()
-
-                    if ig_caption and media_paths:
-                        success = post_instagram(ig_caption, media_paths[:10])
-                        if success:
-                            Done.append("Instagram")
-                        else:
-                            Failed.append("Instagram")
-                    else:
-                        Failed.append("Instagram (Missing caption or media)")
-
-                    time.sleep(2) 
-
-                elif platform == "youtube":
-                    youtube_title = title or title_kh
-                    success = post_youtube(
-                        youtube_title,
-                        youtube_description,
-                        slideshow_path or media_paths[0]
-                    )
-
-                elif platform == "linkedin":
-                    ln_title = title or ""
-                    ln_desc = desc or ""
-
-                    result = post_linkedin_org(
-                        ln_title,
-                        ln_desc,
-                        media_paths[:9]
-                    )
-
-                    if result.get("error") == "expired_token":
-                        Failed.append("LinkedIn (Token Expired — Please Login)")
-
-                    elif result.get("success"):
-                        Done.append("LinkedIn")
-
-                    else:
-                        Failed.append("LinkedIn")
-                    
-                elif platform == "tiktok":
-                    success = (slideshow_path or media_paths) and post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
-
-                if success:
-                    Done.append(platform.capitalize())
-                else:
-                    Failed.append(platform.capitalize())
-
-            except Exception as e:
-                print(f"❌ {platform} post failed:", e)
-                Failed.append(platform.capitalize())
-        
-        # --- Mark post as posted ---
         post_obj.posted = True
         db.session.commit()
         return Done, Failed
