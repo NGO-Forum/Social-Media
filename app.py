@@ -370,7 +370,7 @@ def post_instagram(caption, media_paths):
 
             creation_id = data["id"]
 
-            # Poll status (max 2 minutes)
+            # ⏳ Poll video processing (max ~2 minutes)
             for _ in range(40):
                 time.sleep(3)
                 s = requests.get(
@@ -414,6 +414,8 @@ def post_instagram(caption, media_paths):
             return False
 
         children = []
+
+        # 1️⃣ Upload carousel children
         for img in images[:10]:
             img_url = DOMAIN + os.path.basename(img)
 
@@ -434,6 +436,7 @@ def post_instagram(caption, media_paths):
 
             children.append(data["id"])
 
+        # 2️⃣ Create carousel parent
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media",
             data={
@@ -450,10 +453,37 @@ def post_instagram(caption, media_paths):
         if "id" not in parent:
             return False
 
+        parent_id = parent["id"]
+
+        # 3️⃣ Wait for carousel processing
+        for _ in range(20):
+            time.sleep(3)
+            s = requests.get(
+                f"https://graph.facebook.com/v21.0/{parent_id}",
+                params={
+                    "fields": "status_code",
+                    "access_token": token
+                },
+                timeout=30
+            ).json()
+
+            status = s.get("status_code")
+            print("⏳ IG CAROUSEL STATUS:", status)
+
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                print("❌ IG carousel processing error:", s)
+                return False
+        else:
+            print("❌ IG carousel timeout")
+            return False
+
+        # 4️⃣ Publish carousel
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
             data={
-                "creation_id": parent["id"],
+                "creation_id": parent_id,
                 "access_token": token
             },
             timeout=30
