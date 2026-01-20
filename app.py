@@ -1093,7 +1093,7 @@ def post_all():
             else:
                 Failed.append("Instagram (Missing caption or media)")
 
-            time.sleep(2)  # 🔒 buffer to avoid media conflict
+            time.sleep(5)  # 🔒 buffer to avoid media conflict
 
         # ==================================================
         # 2️⃣ FACEBOOK SECOND
