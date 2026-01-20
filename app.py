@@ -1113,7 +1113,7 @@ def post_all():
                         published_at
                     )
 
-                elif "instagram" in selected_platforms:
+                elif platform == "instagram":
                     ig_parts = []
                     if title:
                         ig_parts.append(title)
@@ -1122,16 +1122,17 @@ def post_all():
 
                     ig_caption = "\n\n".join(ig_parts).strip()
 
-                    if ig_caption and media_paths:
-                        success = post_instagram(ig_caption, media_paths[:10])
-                        if success:
-                            Done.append("Instagram")
-                        else:
-                            Failed.append("Instagram")
-                    else:
-                        Failed.append("Instagram (Missing caption or media)")
+                    if not ig_caption:
+                        print("❌ Instagram skipped: English caption is empty")
+                        Failed.append("Instagram (English text required)")
+                        continue
 
-                    time.sleep(2) 
+                    if not media_paths:
+                        print("❌ Instagram skipped: No media")
+                        Failed.append("Instagram (No media)")
+                        continue
+
+                    success = post_instagram(ig_caption, media_paths[:10])
 
                 elif platform == "youtube":
                     youtube_title = title or title_kh
