@@ -311,6 +311,39 @@ def post_instagram(caption, media_paths):
 
     images, videos = split_media(media_paths)
 
+    # =====================================================
+    # 🖼 SINGLE IMAGE
+    # =====================================================
+    if len(images) == 1 and not videos:
+        img_url = DOMAIN + os.path.basename(images[0])
+
+        r = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_id}/media",
+            data={
+                "image_url": img_url,
+                "caption": caption,
+                "access_token": token
+            },
+            timeout=30
+        )
+
+        print("📌 IG SINGLE IMAGE CREATE:", r.status_code, r.text)
+        data = r.json()
+        if "id" not in data:
+            return False
+
+        r = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+            data={
+                "creation_id": data["id"],
+                "access_token": token
+            },
+            timeout=30
+        )
+
+        print("📌 IG SINGLE IMAGE PUBLISH:", r.status_code, r.text)
+        return r.status_code in (200, 201)
+
     try:
         # =====================================================
         # 🎬 VIDEO / REELS
@@ -318,30 +351,28 @@ def post_instagram(caption, media_paths):
         if videos:
             video_url = DOMAIN + os.path.basename(videos[0])
 
-            # 1️⃣ Create media container
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media",
                 data={
                     "media_type": "REELS",
                     "video_url": video_url,
                     "caption": caption,
-                    "share_to_feed": "true",
+                    "share_to_feed": True,
                     "access_token": token
                 },
                 timeout=30
             )
 
+            print("📌 IG VIDEO CREATE:", r.status_code, r.text)
             data = r.json()
             if "id" not in data:
-                print("❌ IG video create failed:", data)
                 return False
 
             creation_id = data["id"]
 
-            # 2️⃣ Poll processing status
-            while True:
+            # Poll status (max 2 minutes)
+            for _ in range(40):
                 time.sleep(3)
-
                 s = requests.get(
                     f"https://graph.facebook.com/v21.0/{creation_id}",
                     params={
@@ -355,14 +386,14 @@ def post_instagram(caption, media_paths):
                 print("⏳ IG VIDEO STATUS:", status)
 
                 if status == "FINISHED":
-                    time.sleep(2)  # extra safety wait
                     break
-
                 if status == "ERROR":
                     print("❌ IG video processing error:", s)
                     return False
+            else:
+                print("❌ IG video timeout")
+                return False
 
-            # 3️⃣ Publish
             r = requests.post(
                 f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
                 data={
@@ -372,20 +403,17 @@ def post_instagram(caption, media_paths):
                 timeout=30
             )
 
-            resp = r.json()
-            print("📌 IG REEL:", r.status_code, resp)
-
-            if "id" not in resp:
-                print("❌ IG reel publish failed:", resp)
-                return False
-
-            return True
+            print("📌 IG REEL PUBLISH:", r.status_code, r.text)
+            return r.status_code in (200, 201)
 
         # =====================================================
-        # 🖼 IMAGE CAROUSEL
+        # 🖼 IMAGE CAROUSEL (≥2 images ONLY)
         # =====================================================
+        if len(images) < 2:
+            print("❌ IG carousel requires at least 2 images")
+            return False
+
         children = []
-
         for img in images[:10]:
             img_url = DOMAIN + os.path.basename(img)
 
@@ -399,18 +427,13 @@ def post_instagram(caption, media_paths):
                 timeout=30
             )
 
+            print("📌 IG CAROUSEL CHILD:", r.status_code, r.text)
             data = r.json()
             if "id" not in data:
-                print("❌ IG image create failed:", data)
                 return False
 
             children.append(data["id"])
 
-        if not children:
-            print("❌ No valid Instagram media found")
-            return False
-
-        # Create carousel parent
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media",
             data={
@@ -422,12 +445,11 @@ def post_instagram(caption, media_paths):
             timeout=30
         )
 
+        print("📌 IG CAROUSEL CREATE:", r.status_code, r.text)
         parent = r.json()
         if "id" not in parent:
-            print("❌ IG carousel parent failed:", parent)
             return False
 
-        # Publish carousel
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
             data={
@@ -437,18 +459,13 @@ def post_instagram(caption, media_paths):
             timeout=30
         )
 
-        resp = r.json()
-        print("📌 IG CAROUSEL:", r.status_code, resp)
-
-        if "id" not in resp:
-            print("❌ IG carousel publish failed:", resp)
-            return False
-
-        return True
+        print("📌 IG CAROUSEL PUBLISH:", r.status_code, r.text)
+        return r.status_code in (200, 201)
 
     except Exception as e:
         print("❌ Instagram exception:", str(e))
         return False
+
 
 #--- YouTube token refresh ---
 def refresh_youtube_token():
