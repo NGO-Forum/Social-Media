@@ -312,7 +312,7 @@ def post_instagram(caption, media_paths):
     images, videos = split_media(media_paths)
 
     # =====================================================
-    # 🖼 SINGLE IMAGE (NO PROCESSING DELAY)
+    # 🖼 SINGLE IMAGE
     # =====================================================
     if len(images) == 1 and not videos:
         img_url = DOMAIN + os.path.basename(images[0])
@@ -326,11 +326,13 @@ def post_instagram(caption, media_paths):
             },
             timeout=30
         )
+        print("📌 IG SINGLE CREATE:", r.status_code, r.text)
 
-        print("📌 IG SINGLE IMAGE CREATE:", r.status_code, r.text)
         data = r.json()
         if "id" not in data:
             return False
+
+        time.sleep(3)
 
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
@@ -340,179 +342,174 @@ def post_instagram(caption, media_paths):
             },
             timeout=30
         )
-
-        print("📌 IG SINGLE IMAGE PUBLISH:", r.status_code, r.text)
+        print("📌 IG SINGLE PUBLISH:", r.status_code, r.text)
         return r.status_code in (200, 201)
 
-    try:
-        # =====================================================
-        # 🎬 VIDEO / REELS
-        # =====================================================
-        if videos:
-            video_url = DOMAIN + os.path.basename(videos[0])
+    # =====================================================
+    # 🎬 VIDEO / REELS
+    # =====================================================
+    if videos:
+        video_url = DOMAIN + os.path.basename(videos[0])
 
-            r = requests.post(
-                f"https://graph.facebook.com/v21.0/{ig_id}/media",
-                data={
-                    "media_type": "REELS",
-                    "video_url": video_url,
-                    "caption": caption,
-                    "share_to_feed": True,
-                    "access_token": token
-                },
-                timeout=30
-            )
-
-            print("📌 IG VIDEO CREATE:", r.status_code, r.text)
-            data = r.json()
-            if "id" not in data:
-                return False
-
-            creation_id = data["id"]
-
-            # ⏳ Wait until video is processed
-            for _ in range(40):  # ~2 minutes
-                time.sleep(3)
-                s = requests.get(
-                    f"https://graph.facebook.com/v21.0/{creation_id}",
-                    params={
-                        "fields": "status_code",
-                        "access_token": token
-                    },
-                    timeout=30
-                ).json()
-
-                status = s.get("status_code")
-                print("⏳ IG VIDEO STATUS:", status)
-
-                if status == "FINISHED":
-                    break
-                if status == "ERROR":
-                    print("❌ IG video processing error:", s)
-                    return False
-            else:
-                print("❌ IG video timeout")
-                return False
-
-            # Publish video
-            r = requests.post(
-                f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
-                data={
-                    "creation_id": creation_id,
-                    "access_token": token
-                },
-                timeout=30
-            )
-
-            print("📌 IG REEL PUBLISH:", r.status_code, r.text)
-            return r.status_code in (200, 201)
-
-        # =====================================================
-        # 🖼 IMAGE CAROUSEL (≥2 IMAGES)
-        # =====================================================
-        if len(images) < 2:
-            print("❌ IG carousel requires at least 2 images")
-            return False
-
-        children = []
-
-        # 1️⃣ Upload carousel children
-        for img in images[:10]:
-            img_url = DOMAIN + os.path.basename(img)
-
-            r = requests.post(
-                f"https://graph.facebook.com/v21.0/{ig_id}/media",
-                data={
-                    "image_url": img_url,
-                    "is_carousel_item": "true",
-                    "access_token": token
-                },
-                timeout=30
-            )
-
-            print("📌 IG CAROUSEL CHILD:", r.status_code, r.text)
-            data = r.json()
-            if "id" not in data:
-                return False
-
-            children.append(data["id"])
-
-        # 2️⃣ Create carousel parent
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media",
             data={
-                "media_type": "CAROUSEL",
-                "children": ",".join(children),
+                "media_type": "REELS",
+                "video_url": video_url,
                 "caption": caption,
+                "share_to_feed": True,
                 "access_token": token
             },
             timeout=30
         )
+        print("📌 IG VIDEO CREATE:", r.status_code, r.text)
 
-        print("📌 IG CAROUSEL CREATE:", r.status_code, r.text)
-        parent = r.json()
-        if "id" not in parent:
+        data = r.json()
+        if "id" not in data:
             return False
 
-        parent_id = parent["id"]
+        creation_id = data["id"]
 
-        # 3️⃣ Wait for carousel processing
-        for _ in range(20):  # ~60s
+        # ⏳ WAIT VIDEO READY
+        for _ in range(40):  # ~2 min
             time.sleep(3)
             s = requests.get(
-                f"https://graph.facebook.com/v21.0/{parent_id}",
+                f"https://graph.facebook.com/v21.0/{creation_id}",
                 params={
                     "fields": "status_code",
                     "access_token": token
-                },
-                timeout=30
+                }
             ).json()
 
             status = s.get("status_code")
-            print("⏳ IG CAROUSEL STATUS:", status)
+            print("⏳ VIDEO STATUS:", status)
 
             if status == "FINISHED":
                 break
             if status == "ERROR":
-                print("❌ IG carousel processing error:", s)
                 return False
         else:
-            print("❌ IG carousel timeout")
+            print("❌ VIDEO TIMEOUT")
             return False
 
-        # 4️⃣ Publish carousel (RETRY FIX – REQUIRED)
-        for attempt in range(5):
-            r = requests.post(
-                f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
-                data={
-                    "creation_id": parent_id,
+        r = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+            data={
+                "creation_id": creation_id,
+                "access_token": token
+            },
+            timeout=30
+        )
+        print("📌 IG VIDEO PUBLISH:", r.status_code, r.text)
+        return r.status_code in (200, 201)
+
+    # =====================================================
+    # 🖼 IMAGE CAROUSEL (THE HARD PART)
+    # =====================================================
+    if len(images) < 2:
+        print("❌ IG carousel needs at least 2 images")
+        return False
+
+    children = []
+
+    # 1️⃣ UPLOAD + WAIT EACH CHILD
+    for img in images[:10]:
+        img_url = DOMAIN + os.path.basename(img)
+
+        r = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_id}/media",
+            data={
+                "image_url": img_url,
+                "is_carousel_item": "true",
+                "access_token": token
+            },
+            timeout=30
+        )
+        print("📌 IG CHILD CREATE:", r.status_code, r.text)
+
+        data = r.json()
+        if "id" not in data:
+            return False
+
+        child_id = data["id"]
+
+        # ⏳ WAIT CHILD READY (CRITICAL)
+        for _ in range(20):  # ~60s
+            time.sleep(3)
+            s = requests.get(
+                f"https://graph.facebook.com/v21.0/{child_id}",
+                params={
+                    "fields": "status_code",
                     "access_token": token
-                },
-                timeout=30
-            )
+                }
+            ).json()
 
-            print(f"📌 IG CAROUSEL PUBLISH ATTEMPT {attempt+1}:", r.status_code, r.text)
+            status = s.get("status_code")
+            print("⏳ CHILD STATUS:", status)
 
-            if r.status_code in (200, 201):
-                return True
-
-            data = r.json()
-            error = data.get("error", {})
-
-            # Meta timing bug → retry
-            if error.get("code") == 9007:
-                time.sleep(5)
-                continue
-
-            # Any other error → stop
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                return False
+        else:
+            print("❌ CHILD TIMEOUT")
             return False
 
-        print("❌ IG carousel publish failed after retries")
+        children.append(child_id)
+
+    # 2️⃣ CREATE PARENT
+    r = requests.post(
+        f"https://graph.facebook.com/v21.0/{ig_id}/media",
+        data={
+            "media_type": "CAROUSEL",
+            "children": ",".join(children),
+            "caption": caption,
+            "access_token": token
+        },
+        timeout=30
+    )
+    print("📌 IG CAROUSEL CREATE:", r.status_code, r.text)
+
+    parent = r.json()
+    if "id" not in parent:
         return False
 
-    except Exception as e:
-        print("❌ Instagram exception:", str(e))
+    parent_id = parent["id"]
+
+    # 3️⃣ WAIT PARENT READY
+    for _ in range(20):  # ~60s
+        time.sleep(3)
+        s = requests.get(
+            f"https://graph.facebook.com/v21.0/{parent_id}",
+            params={
+                "fields": "status_code",
+                "access_token": token
+            }
+        ).json()
+
+        status = s.get("status_code")
+        print("⏳ PARENT STATUS:", status)
+
+        if status == "FINISHED":
+            break
+        if status == "ERROR":
+            return False
+    else:
+        print("❌ PARENT TIMEOUT")
         return False
+
+    # 4️⃣ PUBLISH (ONCE READY → NO RETRY NEEDED)
+    r = requests.post(
+        f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+        data={
+            "creation_id": parent_id,
+            "access_token": token
+        },
+        timeout=30
+    )
+    print("📌 IG CAROUSEL PUBLISH:", r.status_code, r.text)
+
+    return r.status_code in (200, 201)
 
 
 #--- YouTube token refresh ---
