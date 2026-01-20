@@ -1055,30 +1055,30 @@ def post_all():
                 print("❌ Failed to create slideshow:", e)
                 slideshow_path = None
 
-        # # --- Facebook: use English + Khmer together ---
-        # if "facebook" in selected_platforms:
-        #     fb_title = ""  # Facebook mainly uses description
-        #     fb_desc_parts = []
+        # --- Facebook: use English + Khmer together ---
+        if "facebook" in selected_platforms:
+            fb_title = ""  # Facebook mainly uses description
+            fb_desc_parts = []
 
-        #     # Add Khmer first
-        #     if title_kh:
-        #         fb_desc_parts.append(title_kh)
-        #     if desc_kh:
-        #         fb_desc_parts.append(desc_kh)
+            # Add Khmer first
+            if title_kh:
+                fb_desc_parts.append(title_kh)
+            if desc_kh:
+                fb_desc_parts.append(desc_kh)
 
-        #     # Add English after Khmer
-        #     if title:
-        #         fb_desc_parts.append(title)
-        #     if desc:
-        #         fb_desc_parts.append(desc)
+            # Add English after Khmer
+            if title:
+                fb_desc_parts.append(title)
+            if desc:
+                fb_desc_parts.append(desc)
 
-        #     fb_desc = "\n\n".join(fb_desc_parts)  # Join all parts with line breaks
+            fb_desc = "\n\n".join(fb_desc_parts)  # Join all parts with line breaks
 
-        #     success = post_facebook(fb_title, fb_desc, media_paths if media_paths else None)
-        #     if success:
-        #         Done.append("Facebook")
-        #     else:
-        #         Failed.append("Facebook")
+            success = post_facebook(fb_title, fb_desc, media_paths if media_paths else None)
+            if success:
+                Done.append("Facebook")
+            else:
+                Failed.append("Facebook")
 
         # Build YouTube description (Khmer + English together)
         yt_desc_parts = []
@@ -1100,9 +1100,10 @@ def post_all():
 
 
         for platform in selected_platforms:
+            if platform == "facebook":
+                continue
             try:
                 success = False
-
                 if platform == "website":
                     success = post_website(
                         title,
@@ -1112,7 +1113,7 @@ def post_all():
                         published_at
                     )
 
-                elif platform == "instagram":
+                elif "instagram" in selected_platforms:
                     ig_parts = []
                     if title:
                         ig_parts.append(title)
@@ -1121,56 +1122,51 @@ def post_all():
 
                     ig_caption = "\n\n".join(ig_parts).strip()
 
-                    time.sleep(3)  # REQUIRED
-
                     if ig_caption and media_paths:
                         success = post_instagram(ig_caption, media_paths[:10])
-
-                    if success:
-                        Done.append("Instagram")
+                        if success:
+                            Done.append("Instagram")
+                        else:
+                            Failed.append("Instagram")
                     else:
-                        Failed.append("Instagram")
+                        Failed.append("Instagram (Missing caption or media)")
 
-                    time.sleep(5)  # VERY IMPORTANT
-
-                elif platform == "facebook":
-                    fb_desc_parts = []
-
-                    if title_kh:
-                        fb_desc_parts.append(title_kh)
-                    if desc_kh:
-                        fb_desc_parts.append(desc_kh)
-                    if title:
-                        fb_desc_parts.append(title)
-                    if desc:
-                        fb_desc_parts.append(desc)
-
-                    fb_desc = "\n\n".join(fb_desc_parts)
-
-                    success = post_facebook("", fb_desc, media_paths)
-
-                    if success:
-                        Done.append("Facebook")
-                    else:
-                        Failed.append("Facebook")
+                    time.sleep(2) 
 
                 elif platform == "youtube":
+                    youtube_title = title or title_kh
                     success = post_youtube(
-                        title or title_kh,
+                        youtube_title,
                         youtube_description,
                         slideshow_path or media_paths[0]
                     )
 
                 elif platform == "linkedin":
-                    result = post_linkedin_org(title, desc, media_paths[:9])
-                    success = result.get("success", False)
+                    ln_title = title or ""
+                    ln_desc = desc or ""
 
-                elif platform == "tiktok":
-                    success = post_tiktok(
-                        title_kh,
-                        desc_kh,
-                        slideshow_path or media_paths[0]
+                    result = post_linkedin_org(
+                        ln_title,
+                        ln_desc,
+                        media_paths[:9]
                     )
+
+                    if result.get("error") == "expired_token":
+                        Failed.append("LinkedIn (Token Expired — Please Login)")
+
+                    elif result.get("success"):
+                        Done.append("LinkedIn")
+
+                    else:
+                        Failed.append("LinkedIn")
+                    
+                elif platform == "tiktok":
+                    success = (slideshow_path or media_paths) and post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
+
+                if success:
+                    Done.append(platform.capitalize())
+                else:
+                    Failed.append(platform.capitalize())
 
             except Exception as e:
                 print(f"❌ {platform} post failed:", e)
