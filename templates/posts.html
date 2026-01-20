@@ -59,38 +59,113 @@
 
 
     <h1 class="text-2xl text-green-600 font-bold ml-6 mt-6">All Posts</h1>
-    <main class="container mx-auto px-6 py-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6 max-h-[73vh] h-auto 
-            overflow-x-hidden overflow-y-auto 
-            scrollbar-thin scrollbar-thumb-green-600 scrollbar-track-gray-200 
-            sm:max-h-[64vh] md:max-h-[74vh] lg:max-h-[62vh]">
+    <main class="container mx-auto px-6 py-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+
         {% for post in posts %}
-        <div
-            class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-2xl transition duration-300 transform hover:-translate-y-1">
-            <!-- Images -->
+        <button type="button" onclick="showPost({{ post.id }})"
+            class="bg-white rounded-2xl shadow hover:shadow-xl transition overflow-hidden text-left">
+
+            <!-- Cover Image -->
             {% if post.images %}
-            <div class="grid grid-cols-2 gap-1 p-2 bg-gray-50">
-                {% for img in post.images.split(',') %}
-                <img src="{{ url_for('uploaded_file', filename=img | basename) }}" alt="Post image"
-                    class="w-full h-40 object-cover rounded-md border border-gray-200">
-                {% endfor %}
-            </div>
+            <img src="{{ url_for('uploaded_file', filename=post.images.split(',')[0] | basename) }}"
+                class="w-full h-56 object-cover">
             {% endif %}
 
-            <!-- Content -->
-            <div class="p-4">
-                <h2 class="font-bold text-lg mb-2 truncate">{{ post.title }}</h2>
-                <p class="text-gray-700 text-sm mb-2">{{ post.description }}</p>
-                <p class="text-gray-500 text-xs mb-1">
-                    <span class="font-semibold">Scheduled:</span> {{ post.scheduled_at if post.scheduled_at else 'None'
-                    }}
+            <!-- Text -->
+            <div class="p-5">
+                <p class="text-gray-400 text-sm mb-2">
+                    {{ post.created_at.strftime('%B %d, %Y') }}
                 </p>
-                <p class="text-gray-500 text-xs mb-1">
-                    <span class="font-semibold">Created:</span> {{ post.created_at.strftime('%Y-%m-%d %H:%M') }}
+
+                <h2 class="font-bold text-lg mb-3 line-clamp-2">
+                    {{ post.title }}
+                </h2>
+
+                <p class="text-gray-600 text-sm line-clamp-3">
+                    {{ post.description }}
                 </p>
+
+                <div class="mt-4 flex items-center gap-2 text-green-600 font-semibold">
+                    Read More
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                </div>
             </div>
-        </div>
+        </button>
         {% endfor %}
+
     </main>
+
+    <script>
+        function showPost(id) {
+            fetch(`/api/posts/${id}`)
+                .then(res => res.json())
+                .then(post => {
+
+                    let images = post.images || [];
+                    let index = 0;
+
+                    function renderImage() {
+                        if (!images.length) return '';
+
+                        let arrows = '';
+                        if (images.length > 1) {
+                            arrows = `
+                        <button onclick="prevImg()"
+                            class="absolute left-3 top-1/2 -translate-y-1/2
+                                   bg-white/80 w-9 h-9 rounded-full text-xl">‹</button>
+                        <button onclick="nextImg()"
+                            class="absolute right-3 top-1/2 -translate-y-1/2
+                                   bg-white/80 w-9 h-9 rounded-full text-xl">›</button>
+                    `;
+                        }
+
+                        return `
+                    <div class="relative">
+                        <img src="/uploads/${images[index].split('/').pop()}"
+                             class="w-full max-h-[420px] object-cover rounded-xl">
+                        ${arrows}
+                    </div>
+                `;
+                    }
+
+                    function modalHtml() {
+                        return `
+                    ${renderImage()}
+                    <p class="text-sm text-gray-400 mt-4 mb-3">${post.created_at}</p>
+                    <div class="text-left text-gray-700 leading-relaxed whitespace-pre-line">
+                        ${post.description}
+                    </div>
+                `;
+                    }
+
+                    window.prevImg = function () {
+                        index = (index - 1 + images.length) % images.length;
+                        Swal.update({ html: modalHtml() });
+                    };
+
+                    window.nextImg = function () {
+                        index = (index + 1) % images.length;
+                        Swal.update({ html: modalHtml() });
+                    };
+
+                    Swal.fire({
+                        title: post.title,
+                        html: modalHtml(),
+                        width: 900,
+                        showCloseButton: true,
+                        showConfirmButton: false,
+                        customClass: {
+                            popup: 'rounded-2xl'
+                        }
+                    });
+                })
+                .catch(err => {
+                    console.error(err);
+                    Swal.fire("Error", "Failed to load post", "error");
+                });
+        }
+    </script>
+
 
 </body>
 

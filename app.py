@@ -32,8 +32,8 @@ app.secret_key = "@Riti#NGOF2025"
 
 
 # MySQL connection
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@locahost/media'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:media2025@mysql_db/media'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@locahost/media'
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:media2025@mysql_db/media'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -1388,9 +1388,22 @@ def show_posts():
     return render_template("posts.html", posts=posts)
 
 
+@app.route("/api/posts/<int:post_id>")
+@login_required
+def post_detail_api(post_id):
+    post = Post.query.get_or_404(post_id)
+
+    return {
+        "title": post.title,
+        "description": post.description,
+        "created_at": post.created_at.strftime("%B %d, %Y"),
+        "images": post.images.split(",") if post.images else []
+    }
+
+
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
+    # with app.app_context():
+    #     db.create_all()
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
