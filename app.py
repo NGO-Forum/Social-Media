@@ -1075,6 +1075,7 @@ def post_all():
             ig_caption = "\n\n".join(filter(None, [title, desc])).strip()
 
             if ig_caption and media_paths:
+                time.sleep(3)  # 🔥 CRITICAL
                 ig_ok = post_instagram(ig_caption, media_paths[:10])
                 if ig_ok:
                     Done.append("Instagram")
@@ -1083,8 +1084,7 @@ def post_all():
             else:
                 Failed.append("Instagram (Missing caption or media)")
 
-            # 🔒 REQUIRED DELAY
-            time.sleep(10)
+            time.sleep(8)
 
         # ==================================================
         # 2️⃣ FACEBOOK SECOND
