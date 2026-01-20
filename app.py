@@ -964,7 +964,10 @@ def index():
 @app.route("/", methods=["POST"])
 @login_required
 def post_all():
-    selected_platforms = request.form.getlist("platforms")
+    selected_platforms = [
+        p.strip().lower()
+        for p in request.form.getlist("platforms")
+    ]
     title = request.form.get("title")
     desc = request.form.get("desc")  # English
     title_kh = request.form.get("title_kh")  # Khmer title
@@ -1115,16 +1118,24 @@ def post_all():
 
                 elif platform == "instagram":
                     ig_parts = []
+
+                    # Prefer English
                     if title:
                         ig_parts.append(title)
                     if desc:
                         ig_parts.append(desc)
 
+                    # Fallback to Khmer
+                    if not ig_parts:
+                        if title_kh:
+                            ig_parts.append(title_kh)
+                        if desc_kh:
+                            ig_parts.append(desc_kh)
+
                     ig_caption = "\n\n".join(ig_parts).strip()
 
                     if not ig_caption:
-                        print("❌ Instagram skipped: English caption is empty")
-                        Failed.append("Instagram (English text required)")
+                        Failed.append("Instagram (Caption required)")
                         continue
 
                     if not media_paths:
