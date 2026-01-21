@@ -299,44 +299,7 @@ def post_facebook(title, desc, media_paths):
         return False
 
 
-# -------------------------------------------------------
-# Helper: wait until IG media is REALLY ready
-# -------------------------------------------------------
-def wait_ig_ready(media_id, token, timeout=120):
-    """
-    Wait until Instagram media is fully publishable.
-    Requires:
-      - status_code == FINISHED
-      - media_product_type exists
-    """
-    for _ in range(timeout):
-        time.sleep(3)
-
-        r = requests.get(
-            f"https://graph.facebook.com/v21.0/{media_id}",
-            params={
-                "fields": "status_code,media_product_type",
-                "access_token": token
-            }
-        ).json()
-
-        status = r.get("status_code")
-        mtype = r.get("media_product_type")
-
-        print(f"⏳ IG READY CHECK [{media_id}]:", status, mtype)
-
-        if status == "FINISHED" and mtype:
-            return True
-
-        if status == "ERROR":
-            return False
-
-    return False
-
-
-# -------------------------------------------------------
-# Instagram posting (single / reels / carousel)
-# -------------------------------------------------------
+# --- Instagram posting (image OR video) ---
 def post_instagram(caption, media_paths):
     token = os.getenv("META_PAGE_TOKEN")
     ig_id = os.getenv("META_INSTAGRAM_BUSINESS_ID")
@@ -359,7 +322,6 @@ def post_instagram(caption, media_paths):
             data={
                 "image_url": img_url,
                 "caption": caption,
-                "published": "false",
                 "access_token": token
             },
             timeout=30
@@ -368,10 +330,6 @@ def post_instagram(caption, media_paths):
 
         data = r.json()
         if "id" not in data:
-            return False
-
-        if not wait_ig_ready(data["id"], token, timeout=30):
-            print("❌ SINGLE IMAGE NOT READY")
             return False
 
         time.sleep(3)
@@ -400,7 +358,6 @@ def post_instagram(caption, media_paths):
                 "video_url": video_url,
                 "caption": caption,
                 "share_to_feed": True,
-                "published": "false",
                 "access_token": token
             },
             timeout=30
@@ -413,11 +370,27 @@ def post_instagram(caption, media_paths):
 
         creation_id = data["id"]
 
-        if not wait_ig_ready(creation_id, token, timeout=120):
-            print("❌ VIDEO NOT READY")
-            return False
+        # ⏳ WAIT VIDEO READY
+        for _ in range(40):  # ~2 min
+            time.sleep(3)
+            s = requests.get(
+                f"https://graph.facebook.com/v21.0/{creation_id}",
+                params={
+                    "fields": "status_code",
+                    "access_token": token
+                }
+            ).json()
 
-        time.sleep(5)
+            status = s.get("status_code")
+            print("⏳ VIDEO STATUS:", status)
+
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                return False
+        else:
+            print("❌ VIDEO TIMEOUT")
+            return False
 
         r = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
@@ -431,7 +404,7 @@ def post_instagram(caption, media_paths):
         return r.status_code in (200, 201)
 
     # =====================================================
-    # 🖼 IMAGE CAROUSEL
+    # 🖼 IMAGE CAROUSEL (THE HARD PART)
     # =====================================================
     if len(images) < 2:
         print("❌ IG carousel needs at least 2 images")
@@ -439,7 +412,7 @@ def post_instagram(caption, media_paths):
 
     children = []
 
-    # 1️⃣ CREATE CHILD ITEMS
+    # 1️⃣ UPLOAD + WAIT EACH CHILD
     for img in images[:10]:
         img_url = DOMAIN + os.path.basename(img)
 
@@ -448,7 +421,6 @@ def post_instagram(caption, media_paths):
             data={
                 "image_url": img_url,
                 "is_carousel_item": "true",
-                "published": "false",
                 "access_token": token
             },
             timeout=30
@@ -461,20 +433,37 @@ def post_instagram(caption, media_paths):
 
         child_id = data["id"]
 
-        if not wait_ig_ready(child_id, token, timeout=90):
-            print("❌ CHILD NOT READY")
+        # ⏳ WAIT CHILD READY (CRITICAL)
+        for _ in range(20):  # ~60s
+            time.sleep(3)
+            s = requests.get(
+                f"https://graph.facebook.com/v21.0/{child_id}",
+                params={
+                    "fields": "status_code",
+                    "access_token": token
+                }
+            ).json()
+
+            status = s.get("status_code")
+            print("⏳ CHILD STATUS:", status)
+
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                return False
+        else:
+            print("❌ CHILD TIMEOUT")
             return False
 
         children.append(child_id)
 
-    # 2️⃣ CREATE CAROUSEL PARENT
+    # 2️⃣ CREATE PARENT
     r = requests.post(
         f"https://graph.facebook.com/v21.0/{ig_id}/media",
         data={
             "media_type": "CAROUSEL",
             "children": ",".join(children),
             "caption": caption,
-            "published": "false",
             "access_token": token
         },
         timeout=30
@@ -487,13 +476,29 @@ def post_instagram(caption, media_paths):
 
     parent_id = parent["id"]
 
-    if not wait_ig_ready(parent_id, token, timeout=120):
-        print("❌ CAROUSEL PARENT NOT READY")
+    # 3️⃣ WAIT PARENT READY
+    for _ in range(20):  # ~60s
+        time.sleep(3)
+        s = requests.get(
+            f"https://graph.facebook.com/v21.0/{parent_id}",
+            params={
+                "fields": "status_code",
+                "access_token": token
+            }
+        ).json()
+
+        status = s.get("status_code")
+        print("⏳ PARENT STATUS:", status)
+
+        if status == "FINISHED":
+            break
+        if status == "ERROR":
+            return False
+    else:
+        print("❌ PARENT TIMEOUT")
         return False
 
-    time.sleep(5)
-
-    # 3️⃣ PUBLISH
+    # 4️⃣ PUBLISH (ONCE READY → NO RETRY NEEDED)
     r = requests.post(
         f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
         data={
@@ -506,7 +511,36 @@ def post_instagram(caption, media_paths):
 
     return r.status_code in (200, 201)
 
+def wait_ig_ready(media_id, token, timeout=120):
+    """
+    Wait until Instagram media is fully publishable.
+    Requires:
+      - status_code == FINISHED
+      - media_product_type present
+    """
+    for i in range(timeout):
+        time.sleep(3)
 
+        r = requests.get(
+            f"https://graph.facebook.com/v21.0/{media_id}",
+            params={
+                "fields": "status_code,media_product_type",
+                "access_token": token
+            }
+        ).json()
+
+        status = r.get("status_code")
+        mtype = r.get("media_product_type")
+
+        print(f"⏳ IG READY CHECK [{media_id}]:", status, mtype)
+
+        if status == "FINISHED" and mtype:
+            return True
+
+        if status == "ERROR":
+            return False
+
+    return False
 
 #--- YouTube token refresh ---
 def refresh_youtube_token():
