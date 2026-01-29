@@ -17,7 +17,7 @@ from google.auth.transport.requests import Request
 from pathlib import Path
 from openai import OpenAI
 import time
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 import base64, hashlib
 
 # Fix for Pillow >= 10 / Python 3.13
@@ -32,7 +32,7 @@ app.secret_key = "@Riti#NGOF2025"
 
 
 # MySQL connection
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@locahost/media'
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/media'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:media2025@mysql_db/media'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -624,64 +624,43 @@ def post_youtube(title, desc, media_path):
 
 
 #--- TikTok posting ---
-def post_tiktok(title, desc, media_path):
-    """
-    Upload a video to TikTok using the Business API.
-
-    Uses get_tiktok_access_token() so it automatically refreshes
-    the token when needed.
-    """
-    # Build caption text
-    if title and desc:
-        text = f"{title}\n\n{desc}"
-    else:
-        text = (title or "") + ("\n\n" + desc if desc else "")
-    text = text.strip() or " "
-
-    # Get a valid access token (handles refresh)
-    access_token = get_tiktok_access_token()
-    if not access_token:
-        print("❌ TikTok: no valid access token, please reauthorize via /tiktok/login")
+def post_tiktok(title, description, video_path):
+    token = get_tiktok_access_token()
+    if not token:
         return False
 
-    headers = {"Access-Token": access_token}
+    caption = ((title or "") + "\n\n" + (description or "")).strip()
 
-    # --- Upload video file ---
-    upload_url = "https://business-api.tiktok.com/open_api/v1.3/media/upload/"
-    try:
-        with open(media_path, "rb") as f:
-            files = {"video_file": f}
-            resp = requests.post(upload_url, files=files, headers=headers)
-
-        if resp.status_code != 200:
-            print("❌ TikTok upload failed:", resp.status_code, resp.text)
-            return False
-
-        media_id = resp.json().get("data", {}).get("video_id")
-        if not media_id:
-            print("❌ TikTok upload response missing video_id:", resp.text)
-            return False
-
-        # --- Create the post ---
-        post_url = "https://business-api.tiktok.com/open_api/v1.3/post/create/"
-
-        body = {
-            "business_id": SOCIAL_API['tiktok']['business_id'],
-            "video_id": media_id,
-            "caption": text
+    init = requests.post(
+        "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "post_info": {"title": caption},
+            "source_info": {
+                "source": "FILE_UPLOAD",
+                "video_size": os.path.getsize(video_path)
+            }
         }
-        post_resp = requests.post(post_url, json=body, headers=headers)
+    ).json()
 
-        if post_resp.status_code == 200:
-            print("✅ TikTok post created successfully:", post_resp.text)
-            return True
-
-        print("❌ TikTok post failed:", post_resp.status_code, post_resp.text)
+    if "data" not in init:
+        print("❌ TikTok init failed:", init)
         return False
 
-    except Exception as e:
-        print("❌ TikTok post exception:", e)
-        return False
+    upload_url = init["data"]["upload_url"]
+    publish_id = init["data"]["publish_id"]
+
+    with open(video_path, "rb") as f:
+        requests.put(upload_url, data=f)
+
+    commit = requests.post(
+        "https://open.tiktokapis.com/v2/post/publish/video/commit/",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"publish_id": publish_id}
+    )
+
+    print("📌 TikTok commit:", commit.text)
+    return commit.status_code in [200, 201]
 
 
 # --- Token helpers ---
@@ -689,11 +668,13 @@ def save_tiktok_tokens(tokens):
     with open(TIKTOK_TOKEN_FILE, "w") as f:
         json.dump(tokens, f, indent=4)
 
+
 def load_tiktok_tokens():
     if os.path.exists(TIKTOK_TOKEN_FILE):
         with open(TIKTOK_TOKEN_FILE, "r") as f:
             return json.load(f)
     return None
+
 
 def get_tiktok_access_token():
     tokens = load_tiktok_tokens()
@@ -701,33 +682,36 @@ def get_tiktok_access_token():
         print("❌ TikTok not authorized. Visit /tiktok/login")
         return None
 
-    expires_at = datetime.fromisoformat(tokens["expires_at"]).astimezone(timezone.utc)
+    expires_at = datetime.fromisoformat(tokens["expires_at"])
 
-    if datetime.now(timezone.utc) >= expires_at:
+    if datetime.utcnow() >= expires_at:
         print("🔄 Refreshing TikTok token...")
 
-        refresh_url = "https://business-api.tiktok.com/open_api/v1.3/oauth/refresh_token/"
-        payload = {
-            "app_id": SOCIAL_API["tiktok"]["client_key"],
-            "secret": SOCIAL_API["tiktok"]["client_secret"],
-            "grant_type": "refresh_token",
-            "refresh_token": tokens["refresh_token"]
-        }
+        r = requests.post(
+            "https://open.tiktokapis.com/v2/oauth/token/",
+            data={
+                "client_key": SOCIAL_API["tiktok"]["client_key"],
+                "client_secret": SOCIAL_API["tiktok"]["client_secret"],
+                "grant_type": "refresh_token",
+                "refresh_token": tokens["refresh_token"]
+            }
+        )
 
-        r = requests.post(refresh_url, json=payload)
-        if r.status_code != 200:
-            print("❌ TikTok refresh failed:", r.text)
+        data = r.json()
+
+        if "access_token" not in data:
+            print("❌ Refresh failed:", data)
             return None
 
-        data = r.json()["data"]
         tokens = {
             "access_token": data["access_token"],
             "refresh_token": data["refresh_token"],
             "expires_at": (
-                datetime.now(timezone.utc)
-                + timedelta(seconds=int(data["expires_in"]))
+                datetime.utcnow() +
+                timedelta(seconds=int(data["expires_in"]))
             ).isoformat()
         }
+
         save_tiktok_tokens(tokens)
         print("✅ TikTok token refreshed")
 
@@ -747,46 +731,49 @@ def generate_pkce_pair():
 # --- OAuth login ---
 @app.route("/tiktok/login")
 def tiktok_login():
-    auth_url = (
-        "https://business-api.tiktok.com/open_api/v1.3/oauth/authorize/"
-        f"?app_id={SOCIAL_API['tiktok']['client_key']}"
-        f"&redirect_uri={quote_plus(SOCIAL_API['tiktok']['redirect_uri'])}"
-        "&state=ngof123"
+    params = {
+        "client_key": SOCIAL_API["tiktok"]["client_key"],
+        "response_type": "code",
+        "scope": "user.info.basic,video.upload,video.publish",
+        "redirect_uri": SOCIAL_API["tiktok"]["redirect_uri"]
+    }
+    return redirect(
+        "https://www.tiktok.com/v2/auth/authorize/?" + urlencode(params)
     )
-    return redirect(auth_url)
 
 
 @app.route("/tiktok/callback")
 def tiktok_callback():
-    auth_code = request.args.get("auth_code")
-    if not auth_code:
-        return f"Missing auth_code: {request.args}", 400
+    code = request.args.get("code")
 
-    token_url = "https://business-api.tiktok.com/open_api/v1.3/oauth/access_token/"
-    payload = {
-        "app_id": SOCIAL_API["tiktok"]["client_key"],
-        "secret": SOCIAL_API["tiktok"]["client_secret"],
-        "grant_type": "authorization_code",
-        "auth_code": auth_code,
-        "business_id": SOCIAL_API["tiktok"]["business_id"]
-    }
+    r = requests.post(
+        "https://open.tiktokapis.com/v2/oauth/token/",
+        data={
+            "client_key": SOCIAL_API["tiktok"]["client_key"],
+            "client_secret": SOCIAL_API["tiktok"]["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": SOCIAL_API["tiktok"]["redirect_uri"]
+        }
+    )
 
-    r = requests.post(token_url, json=payload)
-    if r.status_code != 200:
-        return f"Token exchange failed:<br>{r.text}", 400
+    data = r.json()
 
-    data = r.json()["data"]
+    if "access_token" not in data:
+        return f"Token error: {data}"
 
-    save_tiktok_tokens({
+    tokens = {
         "access_token": data["access_token"],
         "refresh_token": data["refresh_token"],
         "expires_at": (
-            datetime.now(timezone.utc)
-            + timedelta(seconds=int(data["expires_in"]))
+            datetime.utcnow() +
+            timedelta(seconds=int(data["expires_in"]))
         ).isoformat()
-    })
+    }
 
-    return "✅ TikTok Business authorized successfully"
+    save_tiktok_tokens(tokens)
+
+    return "✅ TikTok connected successfully"
 
 
 
