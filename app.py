@@ -622,7 +622,7 @@ def post_youtube(title, desc, media_path):
 
 
 
-#--- TikTok posting ---
+# --- TikTok posting ---
 def post_tiktok(title, description, video_path):
     token = get_tiktok_access_token()
     if not token:
@@ -631,6 +631,9 @@ def post_tiktok(title, description, video_path):
 
     caption = ((title or "") + "\n\n" + (description or "")).strip()
 
+    # ===============================
+    # INIT UPLOAD
+    # ===============================
     init_resp = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/init/",
         headers={
@@ -638,13 +641,16 @@ def post_tiktok(title, description, video_path):
             "Content-Type": "application/json"
         },
         json={
-            "post_info": {
-                "caption": caption,
-                "privacy_level": "PUBLIC",
-                "video_info": {
-                    "title": caption[:90]
-                }
+            # ✅ ROOT LEVEL FIELDS (NO post_info)
+            "caption": caption,
+            "privacy_level": "PUBLIC",
+
+            # ✅ REQUIRED VIDEO INFO
+            "video_info": {
+                "title": caption[:90]
             },
+
+            # ✅ SOURCE
             "source_info": {
                 "source": "FILE_UPLOAD",
                 "video_size": os.path.getsize(video_path)
@@ -664,33 +670,42 @@ def post_tiktok(title, description, video_path):
     upload_url = init["data"]["upload_url"]
     publish_id = init["data"]["publish_id"]
 
+    # ===============================
+    # UPLOAD VIDEO BINARY
+    # ===============================
     with open(video_path, "rb") as f:
-        up = requests.put(
+        upload_resp = requests.put(
             upload_url,
-            headers={"Content-Type": "video/mp4"},
+            headers={
+                "Content-Type": "video/mp4"
+            },
             data=f
         )
 
-    print("📌 TIKTOK UPLOAD STATUS:", up.status_code)
+    print("📌 TIKTOK UPLOAD STATUS:", upload_resp.status_code)
 
-    if up.status_code not in [200, 201]:
-        print("❌ TikTok upload failed:", up.text)
+    if upload_resp.status_code not in [200, 201]:
+        print("❌ TikTok upload failed:", upload_resp.text)
         return False
 
-    commit = requests.post(
+    # ===============================
+    # COMMIT PUBLISH
+    # ===============================
+    commit_resp = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/commit/",
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         },
-        json={"publish_id": publish_id}
+        json={
+            "publish_id": publish_id
+        }
     )
 
-    print("📌 TIKTOK COMMIT STATUS:", commit.status_code)
-    print("📌 TIKTOK COMMIT BODY:", commit.text)
+    print("📌 TIKTOK COMMIT STATUS:", commit_resp.status_code)
+    print("📌 TIKTOK COMMIT BODY:", commit_resp.text)
 
-    return commit.status_code in [200, 201]
-
+    return commit_resp.status_code in [200, 201]
 
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
