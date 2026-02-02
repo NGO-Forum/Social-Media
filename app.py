@@ -633,9 +633,15 @@ def post_tiktok(title, description, video_path):
 
     init = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/init/",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        },
         json={
-            "post_info": {"title": caption},
+            "post_info": {
+                "title": caption,
+                "privacy_level": "PUBLIC"
+            },
             "source_info": {
                 "source": "FILE_UPLOAD",
                 "video_size": os.path.getsize(video_path)
@@ -651,11 +657,22 @@ def post_tiktok(title, description, video_path):
     publish_id = init["data"]["publish_id"]
 
     with open(video_path, "rb") as f:
-        requests.put(upload_url, data=f)
+        up = requests.put(
+            upload_url,
+            headers={"Content-Type": "video/mp4"},
+            data=f
+        )
+
+    if up.status_code not in [200, 201]:
+        print("❌ TikTok upload failed:", up.text)
+        return False
 
     commit = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/commit/",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        },
         json={"publish_id": publish_id}
     )
 
@@ -745,6 +762,9 @@ def tiktok_login():
 @app.route("/tiktok/callback")
 def tiktok_callback():
     code = request.args.get("code")
+
+    if not code:
+        return "Missing code", 400
 
     r = requests.post(
         "https://open.tiktokapis.com/v2/oauth/token/",
