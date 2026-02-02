@@ -639,8 +639,11 @@ def post_tiktok(title, description, video_path):
         },
         json={
             "post_info": {
-                "caption": caption,        # ✅ correct field
-                "privacy_level": "PUBLIC"
+                "caption": caption,
+                "privacy_level": "PUBLIC",
+                "video_info": {
+                    "title": caption[:90]
+                }
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
