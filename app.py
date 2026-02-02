@@ -107,7 +107,6 @@ SOCIAL_API = {
         "client_key": os.getenv("TIKTOK_CLIENT_KEY"),
         "client_secret": os.getenv("TIKTOK_CLIENT_SECRET"),
         "redirect_uri": os.getenv("TIKTOK_REDIRECT_URI"),
-        "business_id": os.getenv("TIKTOK_BUSINESS_ID"),
         "tokens_file": "tiktok_tokens.json",
     },
 }
@@ -627,11 +626,12 @@ def post_youtube(title, desc, media_path):
 def post_tiktok(title, description, video_path):
     token = get_tiktok_access_token()
     if not token:
+        print("❌ No TikTok token")
         return False
 
     caption = ((title or "") + "\n\n" + (description or "")).strip()
 
-    init = requests.post(
+    init_resp = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/init/",
         headers={
             "Authorization": f"Bearer {token}",
@@ -639,7 +639,7 @@ def post_tiktok(title, description, video_path):
         },
         json={
             "post_info": {
-                "title": caption,
+                "caption": caption,        # ✅ correct field
                 "privacy_level": "PUBLIC"
             },
             "source_info": {
@@ -647,7 +647,12 @@ def post_tiktok(title, description, video_path):
                 "video_size": os.path.getsize(video_path)
             }
         }
-    ).json()
+    )
+
+    print("📌 TIKTOK INIT STATUS:", init_resp.status_code)
+    print("📌 TIKTOK INIT BODY:", init_resp.text)
+
+    init = init_resp.json()
 
     if "data" not in init:
         print("❌ TikTok init failed:", init)
@@ -663,6 +668,8 @@ def post_tiktok(title, description, video_path):
             data=f
         )
 
+    print("📌 TIKTOK UPLOAD STATUS:", up.status_code)
+
     if up.status_code not in [200, 201]:
         print("❌ TikTok upload failed:", up.text)
         return False
@@ -676,7 +683,9 @@ def post_tiktok(title, description, video_path):
         json={"publish_id": publish_id}
     )
 
-    print("📌 TikTok commit:", commit.text)
+    print("📌 TIKTOK COMMIT STATUS:", commit.status_code)
+    print("📌 TIKTOK COMMIT BODY:", commit.text)
+
     return commit.status_code in [200, 201]
 
 
