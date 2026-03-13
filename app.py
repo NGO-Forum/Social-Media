@@ -626,11 +626,11 @@ def post_youtube(title, desc, media_path):
 def post_tiktok(title, description, video_path):
     token = get_tiktok_access_token()
     if not token:
-        print("❌ No TikTok token")
+        print("❌ No TikTok token", flush=True)
         return False
 
     if not video_path or not os.path.exists(video_path):
-        print("❌ TikTok video file not found:", video_path)
+        print("❌ TikTok video file not found:", video_path, flush=True)
         return False
 
     ext = os.path.splitext(video_path)[1].lower()
@@ -640,13 +640,13 @@ def post_tiktok(title, description, video_path):
         ".webm": "video/webm",
     }
     if ext not in content_type_map:
-        print("❌ TikTok invalid file type:", ext)
+        print("❌ TikTok invalid file type:", ext, flush=True)
         return False
 
     file_size = os.path.getsize(video_path)
     caption = ((title or "") + "\n\n" + (description or "")).strip()[:2200]
 
-    # safer test value; ideally query creator_info/query first
+    # unaudited app -> private only
     privacy_level = "SELF_ONLY"
 
     init_payload = {
@@ -666,69 +666,83 @@ def post_tiktok(title, description, video_path):
         }
     }
 
-    init_resp = requests.post(
-        "https://open.tiktokapis.com/v2/post/publish/video/init/",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=UTF-8"
-        },
-        json=init_payload,
-        timeout=60
-    )
+    print("📌 ENTER post_tiktok", flush=True)
+    print("📌 video_path:", video_path, flush=True)
+    print("📌 file_size:", file_size, flush=True)
+    print("📌 init_payload:", init_payload, flush=True)
 
-    print("📌 TIKTOK INIT STATUS:", init_resp.status_code)
-    print("📌 TIKTOK INIT BODY:", init_resp.text)
+    try:
+        init_resp = requests.post(
+            "https://open.tiktokapis.com/v2/post/publish/video/init/",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=UTF-8"
+            },
+            json=init_payload,
+            timeout=60
+        )
+        print("📌 TIKTOK INIT STATUS:", init_resp.status_code, flush=True)
+        print("📌 TIKTOK INIT BODY:", init_resp.text, flush=True)
+    except Exception as e:
+        print("❌ TikTok init request exception:", e, flush=True)
+        return False
 
     try:
         init_data = init_resp.json()
     except Exception:
-        print("❌ TikTok init response is not JSON")
+        print("❌ TikTok init response is not JSON", flush=True)
         return False
 
     if "data" not in init_data:
-        print("❌ TikTok init failed:", init_data)
+        print("❌ TikTok init failed:", init_data, flush=True)
         return False
 
     upload_url = init_data["data"].get("upload_url")
     publish_id = init_data["data"].get("publish_id")
 
     if not upload_url or not publish_id:
-        print("❌ TikTok init missing upload_url or publish_id:", init_data)
+        print("❌ TikTok init missing upload_url or publish_id:", init_data, flush=True)
         return False
 
     with open(video_path, "rb") as f:
         video_bytes = f.read()
 
-    upload_resp = requests.put(
-        upload_url,
-        headers={
-            "Content-Type": content_type_map[ext],
-            "Content-Length": str(file_size),
-            "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
-        },
-        data=video_bytes,
-        timeout=300
-    )
-
-    print("📌 TIKTOK UPLOAD STATUS:", upload_resp.status_code)
-    print("📌 TIKTOK UPLOAD BODY:", upload_resp.text)
-
-    if upload_resp.status_code not in [200, 201, 204]:
-        print("❌ TikTok upload failed:", upload_resp.text)
+    try:
+        upload_resp = requests.put(
+            upload_url,
+            headers={
+                "Content-Type": content_type_map[ext],
+                "Content-Length": str(file_size),
+                "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
+            },
+            data=video_bytes,
+            timeout=300
+        )
+        print("📌 TIKTOK UPLOAD STATUS:", upload_resp.status_code, flush=True)
+        print("📌 TIKTOK UPLOAD BODY:", upload_resp.text, flush=True)
+    except Exception as e:
+        print("❌ TikTok upload request exception:", e, flush=True)
         return False
 
-    commit_resp = requests.post(
-        "https://open.tiktokapis.com/v2/post/publish/video/commit/",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=UTF-8"
-        },
-        json={"publish_id": publish_id},
-        timeout=60
-    )
+    if upload_resp.status_code not in [200, 201, 204]:
+        print("❌ TikTok upload failed:", upload_resp.text, flush=True)
+        return False
 
-    print("📌 TIKTOK COMMIT STATUS:", commit_resp.status_code)
-    print("📌 TIKTOK COMMIT BODY:", commit_resp.text)
+    try:
+        commit_resp = requests.post(
+            "https://open.tiktokapis.com/v2/post/publish/video/commit/",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=UTF-8"
+            },
+            json={"publish_id": publish_id},
+            timeout=60
+        )
+        print("📌 TIKTOK COMMIT STATUS:", commit_resp.status_code, flush=True)
+        print("📌 TIKTOK COMMIT BODY:", commit_resp.text, flush=True)
+    except Exception as e:
+        print("❌ TikTok commit request exception:", e, flush=True)
+        return False
 
     return commit_resp.status_code in [200, 201]
 
