@@ -621,17 +621,39 @@ def post_youtube(title, desc, media_path):
         return False
 
 
+def get_tiktok_creator_info(token):
+    try:
+        r = requests.post(
+            "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=UTF-8"
+            },
+            json={},
+            timeout=30
+        )
+        print("📌 TIKTOK CREATOR INFO STATUS:", r.status_code, flush=True)
+        print("📌 TIKTOK CREATOR INFO BODY:", r.text, flush=True)
 
+        data = r.json()
+        if "data" not in data:
+            return None
+
+        return data["data"]
+    except Exception as e:
+        print("❌ TikTok creator info exception:", e, flush=True)
+        return None
+    
 # --- TikTok posting ---
 def post_tiktok(title, description, video_path):
     token = get_tiktok_access_token()
     if not token:
         print("❌ No TikTok token", flush=True)
-        return False
+        return {"success": False, "error": "no_token"}
 
     if not video_path or not os.path.exists(video_path):
         print("❌ TikTok video file not found:", video_path, flush=True)
-        return False
+        return {"success": False, "error": "file_not_found"}
 
     ext = os.path.splitext(video_path)[1].lower()
     content_type_map = {
@@ -641,13 +663,25 @@ def post_tiktok(title, description, video_path):
     }
     if ext not in content_type_map:
         print("❌ TikTok invalid file type:", ext, flush=True)
-        return False
+        return {"success": False, "error": "invalid_file_type"}
+
+    creator_info = get_tiktok_creator_info(token)
+    if not creator_info:
+        return {"success": False, "error": "creator_info_failed"}
+
+    privacy_options = creator_info.get("privacy_level_options", [])
+    print("📌 TikTok privacy options:", privacy_options, flush=True)
+
+    # Prefer SELF_ONLY for unaudited apps
+    if "SELF_ONLY" in privacy_options:
+        privacy_level = "SELF_ONLY"
+    elif privacy_options:
+        privacy_level = privacy_options[0]
+    else:
+        return {"success": False, "error": "no_privacy_options"}
 
     file_size = os.path.getsize(video_path)
     caption = ((title or "") + "\n\n" + (description or "")).strip()[:2200]
-
-    # unaudited app -> private only
-    privacy_level = "SELF_ONLY"
 
     init_payload = {
         "post_info": {
@@ -666,11 +700,6 @@ def post_tiktok(title, description, video_path):
         }
     }
 
-    print("📌 ENTER post_tiktok", flush=True)
-    print("📌 video_path:", video_path, flush=True)
-    print("📌 file_size:", file_size, flush=True)
-    print("📌 init_payload:", init_payload, flush=True)
-
     try:
         init_resp = requests.post(
             "https://open.tiktokapis.com/v2/post/publish/video/init/",
@@ -683,26 +712,24 @@ def post_tiktok(title, description, video_path):
         )
         print("📌 TIKTOK INIT STATUS:", init_resp.status_code, flush=True)
         print("📌 TIKTOK INIT BODY:", init_resp.text, flush=True)
+        init_data = init_resp.json()
     except Exception as e:
         print("❌ TikTok init request exception:", e, flush=True)
-        return False
-
-    try:
-        init_data = init_resp.json()
-    except Exception:
-        print("❌ TikTok init response is not JSON", flush=True)
-        return False
+        return {"success": False, "error": "init_exception"}
 
     if "data" not in init_data:
-        print("❌ TikTok init failed:", init_data, flush=True)
-        return False
+        err = init_data.get("error", {})
+        return {
+            "success": False,
+            "error": err.get("code", "init_failed"),
+            "message": err.get("message", "Unknown TikTok error")
+        }
 
     upload_url = init_data["data"].get("upload_url")
     publish_id = init_data["data"].get("publish_id")
 
     if not upload_url or not publish_id:
-        print("❌ TikTok init missing upload_url or publish_id:", init_data, flush=True)
-        return False
+        return {"success": False, "error": "missing_upload_url_or_publish_id"}
 
     with open(video_path, "rb") as f:
         video_bytes = f.read()
@@ -722,11 +749,10 @@ def post_tiktok(title, description, video_path):
         print("📌 TIKTOK UPLOAD BODY:", upload_resp.text, flush=True)
     except Exception as e:
         print("❌ TikTok upload request exception:", e, flush=True)
-        return False
+        return {"success": False, "error": "upload_exception"}
 
     if upload_resp.status_code not in [200, 201, 204]:
-        print("❌ TikTok upload failed:", upload_resp.text, flush=True)
-        return False
+        return {"success": False, "error": "upload_failed", "message": upload_resp.text}
 
     try:
         commit_resp = requests.post(
@@ -742,10 +768,12 @@ def post_tiktok(title, description, video_path):
         print("📌 TIKTOK COMMIT BODY:", commit_resp.text, flush=True)
     except Exception as e:
         print("❌ TikTok commit request exception:", e, flush=True)
-        return False
+        return {"success": False, "error": "commit_exception"}
 
-    return commit_resp.status_code in [200, 201]
+    if commit_resp.status_code not in [200, 201]:
+        return {"success": False, "error": "commit_failed", "message": commit_resp.text}
 
+    return {"success": True}
 
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
@@ -1204,7 +1232,11 @@ def post_all():
 
     
     # --- Function to post to all selected platforms ---
-    def do_post(post_obj ):
+    def do_post(post_id):
+        post_obj = Post.query.get(post_id)
+        if not post_obj:
+            return [], ["Post not found"]
+
         Done, Failed = [], []
 
         # Create slideshow for YouTube/TikTok if multiple images
@@ -1369,7 +1401,7 @@ def post_all():
                         tiktok_media = slideshow_path
                     elif media_paths:
                         ext = os.path.splitext(media_paths[0])[1].lower()
-                        if ext in [".mp4", ".mov", ".mkv"]:
+                        if ext in [".mp4", ".mov", ".webm"]:
                             tiktok_media = media_paths[0]
 
                     if not tiktok_media:
@@ -1380,7 +1412,13 @@ def post_all():
                     tiktok_title = title_kh or title or ""
                     tiktok_desc = desc_kh or desc or ""
 
-                    success = post_tiktok(tiktok_title, tiktok_desc, tiktok_media)
+                    result = post_tiktok(tiktok_title, tiktok_desc, tiktok_media)
+
+                    if result.get("success"):
+                        Done.append("TikTok")
+                    else:
+                        Failed.append(f"TikTok ({result.get('error', 'failed')})")
+                    continue
 
                 if success:
                     Done.append(platform.capitalize())
