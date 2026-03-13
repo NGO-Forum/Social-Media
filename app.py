@@ -638,59 +638,81 @@ def post_tiktok(title, description, video_path):
         print("❌ TikTok invalid file type:", ext)
         return False
 
-    caption = ((title or "") + "\n\n" + (description or "")).strip()
-    caption = caption[:2200]
+    file_size = os.path.getsize(video_path)
+    post_title = (title or "Video").strip()[:90]
+
+    # one-chunk upload
+    chunk_size = file_size
+    total_chunk_count = 1
+
+    # IMPORTANT: TikTok init payload
+    init_payload = {
+        "post_info": {
+            "title": post_title,
+            "privacy_level": "PUBLIC",
+            "disable_duet": False,
+            "disable_comment": False,
+            "disable_stitch": False,
+            "video_cover_timestamp_ms": 1000
+        },
+        "source_info": {
+            "source": "FILE_UPLOAD",
+            "video_size": file_size,
+            "chunk_size": chunk_size,
+            "total_chunk_count": total_chunk_count
+        }
+    }
 
     init_resp = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/init/",
         headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=UTF-8"
         },
-        json={
-            "caption": caption,
-            "privacy_level": "PUBLIC",
-            "video_info": {
-                "title": (title or "Video")[:90]
-            },
-            "source_info": {
-                "source": "FILE_UPLOAD",
-                "video_size": os.path.getsize(video_path)
-            }
-        }
+        json=init_payload,
+        timeout=60
     )
 
     print("📌 TIKTOK INIT STATUS:", init_resp.status_code)
     print("📌 TIKTOK INIT BODY:", init_resp.text)
 
     try:
-        init = init_resp.json()
+        init_data = init_resp.json()
     except Exception:
         print("❌ TikTok init response is not JSON")
         return False
 
-    if "data" not in init:
-        print("❌ TikTok init failed:", init)
+    if "data" not in init_data:
+        print("❌ TikTok init failed:", init_data)
         return False
 
-    upload_url = init["data"].get("upload_url")
-    publish_id = init["data"].get("publish_id")
+    upload_url = init_data["data"].get("upload_url")
+    publish_id = init_data["data"].get("publish_id")
 
     if not upload_url or not publish_id:
-        print("❌ TikTok init missing upload_url or publish_id:", init)
+        print("❌ TikTok init missing upload_url or publish_id:", init_data)
         return False
 
     with open(video_path, "rb") as f:
-        upload_resp = requests.put(
-            upload_url,
-            headers={"Content-Type": "video/mp4"},
-            data=f
-        )
+        video_bytes = f.read()
+
+    upload_headers = {
+        "Content-Type": "video/mp4",
+        "Content-Length": str(file_size),
+        "Content-Range": f"bytes 0-{file_size - 1}/{file_size}"
+    }
+
+    upload_resp = requests.put(
+        upload_url,
+        headers=upload_headers,
+        data=video_bytes,
+        timeout=300
+    )
 
     print("📌 TIKTOK UPLOAD STATUS:", upload_resp.status_code)
     print("📌 TIKTOK UPLOAD BODY:", upload_resp.text)
 
-    if upload_resp.status_code not in [200, 201]:
+    if upload_resp.status_code not in [200, 201, 204]:
         print("❌ TikTok upload failed:", upload_resp.text)
         return False
 
@@ -698,15 +720,18 @@ def post_tiktok(title, description, video_path):
         "https://open.tiktokapis.com/v2/post/publish/video/commit/",
         headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=UTF-8"
         },
-        json={"publish_id": publish_id}
+        json={"publish_id": publish_id},
+        timeout=60
     )
 
     print("📌 TIKTOK COMMIT STATUS:", commit_resp.status_code)
     print("📌 TIKTOK COMMIT BODY:", commit_resp.text)
 
     return commit_resp.status_code in [200, 201]
+
+
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
     with open(TIKTOK_TOKEN_FILE, "w") as f:
@@ -1364,7 +1389,7 @@ def post_all():
         except Exception as e:
             db.session.rollback()
             print("❌ DB commit failed:", e)
-            
+
         return Done, Failed
 
     # --- Check if scheduled ---
