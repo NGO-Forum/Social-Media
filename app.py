@@ -634,22 +634,26 @@ def post_tiktok(title, description, video_path):
         return False
 
     ext = os.path.splitext(video_path)[1].lower()
-    if ext not in [".mp4", ".mov", ".mkv"]:
+    content_type_map = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".mkv": "video/mp4",   # safer to convert to mp4 if this causes issues
+    }
+    if ext not in content_type_map:
         print("❌ TikTok invalid file type:", ext)
         return False
 
     file_size = os.path.getsize(video_path)
-    post_title = (title or "Video").strip()[:90]
+    caption = ((title or "") + "\n\n" + (description or "")).strip()[:2200]
 
-    # one-chunk upload
-    chunk_size = file_size
-    total_chunk_count = 1
+    # For now pick a documented value.
+    # Better: query creator_info/query and use one of privacy_level_options.
+    privacy_level = "PUBLIC_TO_EVERYONE"
 
-    # IMPORTANT: TikTok init payload
     init_payload = {
         "post_info": {
-            "title": post_title,
-            "privacy_level": "PUBLIC",
+            "title": caption,
+            "privacy_level": privacy_level,
             "disable_duet": False,
             "disable_comment": False,
             "disable_stitch": False,
@@ -658,8 +662,8 @@ def post_tiktok(title, description, video_path):
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": file_size,
-            "chunk_size": chunk_size,
-            "total_chunk_count": total_chunk_count
+            "chunk_size": file_size,
+            "total_chunk_count": 1
         }
     }
 
@@ -696,15 +700,13 @@ def post_tiktok(title, description, video_path):
     with open(video_path, "rb") as f:
         video_bytes = f.read()
 
-    upload_headers = {
-        "Content-Type": "video/mp4",
-        "Content-Length": str(file_size),
-        "Content-Range": f"bytes 0-{file_size - 1}/{file_size}"
-    }
-
     upload_resp = requests.put(
         upload_url,
-        headers=upload_headers,
+        headers={
+            "Content-Type": content_type_map[ext],
+            "Content-Length": str(file_size),
+            "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
+        },
         data=video_bytes,
         timeout=300
     )
@@ -730,7 +732,6 @@ def post_tiktok(title, description, video_path):
     print("📌 TIKTOK COMMIT BODY:", commit_resp.text)
 
     return commit_resp.status_code in [200, 201]
-
 
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
