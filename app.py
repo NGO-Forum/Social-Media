@@ -629,11 +629,18 @@ def post_tiktok(title, description, video_path):
         print("❌ No TikTok token")
         return False
 
-    caption = ((title or "") + "\n\n" + (description or "")).strip()
+    if not video_path or not os.path.exists(video_path):
+        print("❌ TikTok video file not found:", video_path)
+        return False
 
-    # ===============================
-    # INIT UPLOAD
-    # ===============================
+    ext = os.path.splitext(video_path)[1].lower()
+    if ext not in [".mp4", ".mov", ".mkv"]:
+        print("❌ TikTok invalid file type:", ext)
+        return False
+
+    caption = ((title or "") + "\n\n" + (description or "")).strip()
+    caption = caption[:2200]
+
     init_resp = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/init/",
         headers={
@@ -641,16 +648,11 @@ def post_tiktok(title, description, video_path):
             "Content-Type": "application/json"
         },
         json={
-            # ✅ ROOT LEVEL FIELDS (NO post_info)
             "caption": caption,
             "privacy_level": "PUBLIC",
-
-            # ✅ REQUIRED VIDEO INFO
             "video_info": {
-                "title": caption[:90]
+                "title": (title or "Video")[:90]
             },
-
-            # ✅ SOURCE
             "source_info": {
                 "source": "FILE_UPLOAD",
                 "video_size": os.path.getsize(video_path)
@@ -661,52 +663,50 @@ def post_tiktok(title, description, video_path):
     print("📌 TIKTOK INIT STATUS:", init_resp.status_code)
     print("📌 TIKTOK INIT BODY:", init_resp.text)
 
-    init = init_resp.json()
+    try:
+        init = init_resp.json()
+    except Exception:
+        print("❌ TikTok init response is not JSON")
+        return False
 
     if "data" not in init:
         print("❌ TikTok init failed:", init)
         return False
 
-    upload_url = init["data"]["upload_url"]
-    publish_id = init["data"]["publish_id"]
+    upload_url = init["data"].get("upload_url")
+    publish_id = init["data"].get("publish_id")
 
-    # ===============================
-    # UPLOAD VIDEO BINARY
-    # ===============================
+    if not upload_url or not publish_id:
+        print("❌ TikTok init missing upload_url or publish_id:", init)
+        return False
+
     with open(video_path, "rb") as f:
         upload_resp = requests.put(
             upload_url,
-            headers={
-                "Content-Type": "video/mp4"
-            },
+            headers={"Content-Type": "video/mp4"},
             data=f
         )
 
     print("📌 TIKTOK UPLOAD STATUS:", upload_resp.status_code)
+    print("📌 TIKTOK UPLOAD BODY:", upload_resp.text)
 
     if upload_resp.status_code not in [200, 201]:
         print("❌ TikTok upload failed:", upload_resp.text)
         return False
 
-    # ===============================
-    # COMMIT PUBLISH
-    # ===============================
     commit_resp = requests.post(
         "https://open.tiktokapis.com/v2/post/publish/video/commit/",
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         },
-        json={
-            "publish_id": publish_id
-        }
+        json={"publish_id": publish_id}
     )
 
     print("📌 TIKTOK COMMIT STATUS:", commit_resp.status_code)
     print("📌 TIKTOK COMMIT BODY:", commit_resp.text)
 
     return commit_resp.status_code in [200, 201]
-
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
     with open(TIKTOK_TOKEN_FILE, "w") as f:
@@ -1164,8 +1164,14 @@ def post_all():
 
     
     # --- Function to post to all selected platforms ---
-    def do_post(post_obj):
-        Done, Failed = [], []
+    def do_post(post_id):
+        with app.app_context():
+            Done, Failed = [], []
+
+            post_obj = Post.query.get(post_id)
+            if not post_obj:
+                print(f"❌ Post not found: {post_id}")
+                return Done, ["Post not found"]
 
         # Create slideshow for YouTube/TikTok if multiple images
         slideshow_path = None
@@ -1323,7 +1329,24 @@ def post_all():
 
                     
                 elif platform == "tiktok":
-                    success = (slideshow_path or media_paths) and post_tiktok(title_kh, desc_kh, slideshow_path or media_paths[0])
+                    tiktok_media = None
+
+                    if slideshow_path and os.path.exists(slideshow_path):
+                        tiktok_media = slideshow_path
+                    elif media_paths:
+                        ext = os.path.splitext(media_paths[0])[1].lower()
+                        if ext in [".mp4", ".mov", ".mkv"]:
+                            tiktok_media = media_paths[0]
+
+                    if not tiktok_media:
+                        print("❌ TikTok skipped: No valid video")
+                        Failed.append("TikTok (Video required)")
+                        continue
+
+                    tiktok_title = title_kh or title or ""
+                    tiktok_desc = desc_kh or desc or ""
+
+                    success = post_tiktok(tiktok_title, tiktok_desc, tiktok_media)
 
                 if success:
                     Done.append(platform.capitalize())
@@ -1335,8 +1358,13 @@ def post_all():
                 Failed.append(platform.capitalize())
         
         # --- Mark post as posted ---
-        post_obj.posted = True
-        db.session.commit()
+        try:
+            post_obj.posted = len(Done) > 0
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print("❌ DB commit failed:", e)
+            
         return Done, Failed
 
     # --- Check if scheduled ---
@@ -1345,7 +1373,7 @@ def post_all():
         naive = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
         scheduled_time = tz.localize(naive)
 
-        scheduler.add_job(do_post, 'date', run_date=scheduled_time, args=[new_post])
+        scheduler.add_job(do_post, 'date', run_date=scheduled_time, args=[new_post.id])
         return render_template_string("""
         <html>
         <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
@@ -1366,7 +1394,7 @@ def post_all():
 
     
     # Post immediately
-    Done, Failed = do_post(new_post)
+    Done, Failed = do_post(new_post.id)
 
     # --- Return results (fixed Jinja + JS) ---
     if Done:
