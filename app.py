@@ -1190,14 +1190,8 @@ def post_all():
 
     
     # --- Function to post to all selected platforms ---
-    def do_post(post_id):
-        with app.app_context():
-            Done, Failed = [], []
-
-            post_obj = Post.query.get(post_id)
-            if not post_obj:
-                print(f"❌ Post not found: {post_id}")
-                return Done, ["Post not found"]
+    def do_post(post_obj ):
+        Done, Failed = [], []
 
         # Create slideshow for YouTube/TikTok if multiple images
         slideshow_path = None
@@ -1384,13 +1378,8 @@ def post_all():
                 Failed.append(platform.capitalize())
         
         # --- Mark post as posted ---
-        try:
-            post_obj.posted = len(Done) > 0
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print("❌ DB commit failed:", e)
-
+        post_obj.posted = True
+        db.session.commit()
         return Done, Failed
 
     # --- Check if scheduled ---
