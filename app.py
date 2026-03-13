@@ -637,7 +637,7 @@ def post_tiktok(title, description, video_path):
     content_type_map = {
         ".mp4": "video/mp4",
         ".mov": "video/quicktime",
-        ".mkv": "video/mp4",   # safer to convert to mp4 if this causes issues
+        ".webm": "video/webm",
     }
     if ext not in content_type_map:
         print("❌ TikTok invalid file type:", ext)
@@ -646,9 +646,8 @@ def post_tiktok(title, description, video_path):
     file_size = os.path.getsize(video_path)
     caption = ((title or "") + "\n\n" + (description or "")).strip()[:2200]
 
-    # For now pick a documented value.
-    # Better: query creator_info/query and use one of privacy_level_options.
-    privacy_level = "PUBLIC_TO_EVERYONE"
+    # safer test value; ideally query creator_info/query first
+    privacy_level = "SELF_ONLY"
 
     init_payload = {
         "post_info": {
@@ -732,6 +731,7 @@ def post_tiktok(title, description, video_path):
     print("📌 TIKTOK COMMIT BODY:", commit_resp.text)
 
     return commit_resp.status_code in [200, 201]
+
 
 # --- Token helpers ---
 def save_tiktok_tokens(tokens):
