@@ -230,7 +230,7 @@ def split_media(media_paths):
 def post_facebook(title, desc, media_paths):
     token = os.getenv("META_PAGE_TOKEN")      # PAGE access token
     page_id = os.getenv("META_PAGE_ID")
-    DOMAIN = "https://media.ngoforum.site/uploads/"
+    DOMAIN = "https://media.ngoforum.org.kh/uploads/"
 
     if not token or not page_id:
         print("❌ FB missing token or page_id")
@@ -302,7 +302,7 @@ def post_facebook(title, desc, media_paths):
 def post_instagram(caption, media_paths):
     token = os.getenv("META_PAGE_TOKEN")
     ig_id = os.getenv("META_INSTAGRAM_BUSINESS_ID")
-    DOMAIN = "https://media.ngoforum.site/uploads/"
+    DOMAIN = "https://media.ngoforum.org.kh/uploads/"
 
     if not token or not ig_id:
         print("❌ IG missing token or ig_id")
