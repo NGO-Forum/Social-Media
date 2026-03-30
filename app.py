@@ -186,40 +186,6 @@ def get_static_song():
 
     return None
 
-# ================= IMAGE COMPRESSION =================
-def compress_image(input_path, output_path=None, target_size_kb=3000, max_width=1280):
-    """
-    Compress image to ~3MB
-    Resize + reduce quality
-    """
-
-    if not output_path:
-        output_path = input_path
-
-    img = Image.open(input_path)
-
-    # Convert to RGB (important for JPEG)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-
-    # Resize (very important for size reduction)
-    if img.width > max_width:
-        ratio = max_width / img.width
-        new_height = int(img.height * ratio)
-        img = img.resize((max_width, new_height), Image.ANTIALIAS)
-
-    quality = 90
-    img.save(output_path, "JPEG", optimize=True, quality=quality)
-
-    # Reduce quality until size <= target
-    while os.path.getsize(output_path) > target_size_kb * 1024 and quality > 10:
-        quality -= 5
-        img.save(output_path, "JPEG", optimize=True, quality=quality)
-
-    print(f"✅ Compressed: {input_path} → {round(os.path.getsize(output_path)/1024/1024,2)}MB")
-
-    return output_path
-
 
 # --- Website posting ---
 def post_website(title, desc, media_paths, department, published_at):
@@ -254,7 +220,7 @@ def split_media(media_paths):
         ext = os.path.splitext(p)[1].lower()
         if ext in [".jpg", ".jpeg", ".png", ".webp"]:
             images.append(p)
-        elif ext in [".mp4", ".mov", ".mkv", ".webm"]:
+        elif ext in [".mp4", ".mov", ".mkv"]:
             videos.append(p)
     return images, videos
 
@@ -1218,49 +1184,18 @@ def post_all():
 
     media_files = request.files.getlist("media[]")
     media_paths = []
-
     for file in media_files:
         if not file or not file.filename:
-            continue
+            continue  # skip empty file inputs
 
         filename = secure_filename(file.filename)
+
         if filename == "":
             continue
 
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(path)
-
-        ext = os.path.splitext(path)[1].lower()
-
-        # ================= COMPRESS IMAGE =================
-        if ext in [".jpg", ".jpeg", ".png", ".webp"]:
-            try:
-                # Only compress if > 3MB
-                if os.path.getsize(path) > 3 * 1024 * 1024:
-                    compressed_path = path.replace(ext, "_compressed.jpg")
-
-                    compress_image(
-                        input_path=path,
-                        output_path=compressed_path,
-                        target_size_kb=3000,
-                        max_width=1280
-                    )
-
-                    media_paths.append(os.path.basename(compressed_path))
-
-                    # Delete original big file
-                    os.remove(path)
-
-                else:
-                    media_paths.append(path)
-
-            except Exception as e:
-                print("❌ Compression failed:", e)
-                media_paths.append(path)
-
-        else:
-            # Keep videos unchanged
-            media_paths.append(path)
+        media_paths.append(path)
 
 
 
