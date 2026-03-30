@@ -1246,7 +1246,7 @@ def post_all():
                         max_width=1280
                     )
 
-                    media_paths.append(compressed_path)
+                    media_paths.append(os.path.basename(compressed_path))
 
                     # Delete original big file
                     os.remove(path)
