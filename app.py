@@ -186,6 +186,27 @@ def get_static_song():
 
     return None
 
+def compress_image_to_target(input_path, output_path, target_size_mb=3, quality=95):
+    target_size_bytes = target_size_mb * 1024 * 1024
+
+    img = Image.open(input_path)
+    img = img.convert("RGB")  # ensure compatible
+
+    # Start with high quality
+    q = quality
+
+    while q > 10:
+        img.save(output_path, "JPEG", quality=q, optimize=True)
+
+        size = os.path.getsize(output_path)
+
+        if size <= target_size_bytes:
+            break
+
+        q -= 5  # reduce quality step by step
+
+    return output_path
+
 
 # --- Website posting ---
 def post_website(title, desc, media_paths, department, published_at):
@@ -1195,7 +1216,22 @@ def post_all():
 
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(path)
-        media_paths.append(path)
+
+        # Check file size
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+
+        if size_mb > 10:
+            compressed_path = os.path.join(
+                app.config['UPLOAD_FOLDER'],
+                f"compressed_{filename}.jpg"
+            )
+
+            compress_image_to_target(path, compressed_path, target_size_mb=3)
+
+            os.remove(path)  # delete original big file
+            media_paths.append(compressed_path)
+        else:
+            media_paths.append(path)
 
 
 
