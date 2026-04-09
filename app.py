@@ -11,11 +11,9 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from pytz import timezone as pytz_timezone
 from PIL import Image
-from flask_sqlalchemy import SQLAlchemy
 from flask import send_from_directory
 from google.auth.transport.requests import Request
 from pathlib import Path
-from openai import OpenAI
 import time
 from urllib.parse import quote_plus, urlencode
 import base64, hashlib
@@ -31,13 +29,6 @@ app = Flask(__name__)
 app.secret_key = "@Riti#NGOF2025"
 
 
-# MySQL connection
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/media'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:media2025@mysql_db/media'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
-
-
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -48,18 +39,6 @@ now = datetime.now(pytz_timezone('Asia/Phnom_Penh'))
 # --- Scheduler ---
 scheduler = BackgroundScheduler(timezone=pytz_timezone('Asia/Phnom_Penh'))
 scheduler.start()
-
-
-# Post model
-class Post(db.Model):
-    __tablename__ = 'posts'  # explicitly use your actual table name
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(500), nullable=False)
-    description = db.Column(db.Text, nullable=False)
-    images = db.Column(db.Text, nullable=True)  # comma-separated paths
-    scheduled_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), nullable=True)
-    posted = db.Column(db.Boolean, default=False)
 
 
 # --- User credentials from environment variables ---
@@ -207,6 +186,39 @@ def compress_image_to_target(input_path, output_path, target_size_mb=3, quality=
 
     return output_path
 
+
+def cleanup_old_uploads(days=5):
+    try:
+        folder = app.config["UPLOAD_FOLDER"]
+
+        if not os.path.exists(folder):
+            return
+
+        now_ts = time.time()
+        max_age = days * 24 * 60 * 60
+
+        for filename in os.listdir(folder):
+            path = os.path.join(folder, filename)
+
+            if not os.path.isfile(path):
+                continue
+
+            try:
+                file_age = now_ts - os.path.getmtime(path)
+
+                print(f"Checking: {filename} | Age: {file_age/3600:.2f}h")
+
+                if file_age > max_age:
+                    os.remove(path)
+                    print(f"🗑 Deleted: {filename}")
+
+            except Exception as e:
+                print(f"❌ Error deleting {filename}: {e}")
+
+    except Exception as e:
+        print("❌ Cleanup job error:", e)
+
+scheduler.add_job(cleanup_old_uploads, 'interval', hours=12)
 
 # --- Website posting ---
 def post_website(title, desc, media_paths, department, published_at):
@@ -1183,102 +1195,61 @@ def post_all():
         p.strip().lower()
         for p in request.form.getlist("platforms")
     ]
+
     title = request.form.get("title")
-    desc = request.form.get("desc")  # English
-    title_kh = request.form.get("title_kh")  # Khmer title
-    desc_kh = request.form.get("desc_kh")    # Khmer description
+    desc = request.form.get("desc")
+    title_kh = request.form.get("title_kh")
+    desc_kh = request.form.get("desc_kh")
     scheduled_time_str = request.form.get("scheduled_at")
     website_department = request.form.get("website_department")
 
-    # --- Determine published_at ---
     ph_timezone = pytz_timezone("Asia/Phnom_Penh")
 
     if scheduled_time_str:
-        # Use scheduled datetime
         naive_dt = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
         published_at = ph_timezone.localize(naive_dt).strftime("%Y-%m-%d %H:%M:%S")
     else:
-        # Use current Phnom Penh time
         published_at = datetime.now(ph_timezone).strftime("%Y-%m-%d %H:%M:%S")
-
-
 
     media_files = request.files.getlist("media[]")
     media_paths = []
+
     for file in media_files:
         if not file or not file.filename:
-            continue  # skip empty file inputs
+            continue
 
         filename = secure_filename(file.filename)
-
         if filename == "":
             continue
 
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(path)
 
-        # Check file size
         size_mb = os.path.getsize(path) / (1024 * 1024)
 
-        if size_mb > 10:
+        ext = os.path.splitext(filename)[1].lower()
+
+        if size_mb > 10 and ext in [".jpg", ".jpeg", ".png", ".webp"]:
             compressed_path = os.path.join(
                 app.config['UPLOAD_FOLDER'],
-                f"compressed_{filename}.jpg"
+                f"compressed_{os.path.splitext(filename)[0]}.jpg"
             )
 
             compress_image_to_target(path, compressed_path, target_size_mb=3)
-
-            os.remove(path)  # delete original big file
+            os.remove(path)
             media_paths.append(compressed_path)
         else:
             media_paths.append(path)
 
-
-
-    # Build full text (Khmer + English)
-    full_text_parts = []
-
-    # Khmer first
-    if title_kh:
-        full_text_parts.append(title_kh)
-    if desc_kh:
-        full_text_parts.append(desc_kh)
-
-    # English
-    if title:
-        full_text_parts.append(title)
-    if desc:
-        full_text_parts.append(desc)
-
-
-    # --- Save post to database ---
-    images_str = ",".join(media_paths) if media_paths else None
-    scheduled_at = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M") if scheduled_time_str else None
-
-    new_post = Post(
-        title=title,
-        description=desc,
-        images=images_str,
-        scheduled_at=scheduled_at
-    )
-
-    db.session.add(new_post)
-    db.session.commit()
-
-
-    
-    # --- Function to post to all selected platforms ---
-    def do_post(post_id):
-        post_obj = Post.query.get(post_id)
-        if not post_obj:
-            return [], ["Post not found"]
-
+    def do_post():
         Done, Failed = [], []
 
-        # Create slideshow for YouTube/TikTok if multiple images
         slideshow_path = None
         if len(media_paths) > 1 and any(p in selected_platforms for p in ["youtube", "tiktok"]):
-            slideshow_path = os.path.join(app.config['UPLOAD_FOLDER'], f"slideshow_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4")
+            slideshow_path = os.path.join(
+                app.config['UPLOAD_FOLDER'],
+                f"slideshow_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+            )
             try:
                 music_path = get_static_song()
                 slideshow_path = create_slideshow(
@@ -1287,46 +1258,36 @@ def post_all():
                     duration_per_image=2,
                     music_path=music_path
                 )
-
             except Exception as e:
                 print("❌ Failed to create slideshow:", e)
                 slideshow_path = None
 
-        # --- Facebook: use English + Khmer together ---
+        # Facebook
         if "facebook" in selected_platforms:
-            fb_title = ""  # Facebook mainly uses description
             fb_desc_parts = []
 
-            # Add Khmer first
             if title_kh:
                 fb_desc_parts.append(title_kh)
             if desc_kh:
                 fb_desc_parts.append(desc_kh)
-
-            # Add English after Khmer
             if title:
                 fb_desc_parts.append(title)
             if desc:
                 fb_desc_parts.append(desc)
 
-            fb_desc = "\n\n".join(fb_desc_parts)  # Join all parts with line breaks
+            fb_desc = "\n\n".join(fb_desc_parts)
 
-            success = post_facebook(fb_title, fb_desc, media_paths if media_paths else None)
+            success = post_facebook("", fb_desc, media_paths if media_paths else None)
             if success:
                 Done.append("Facebook")
             else:
                 Failed.append("Facebook")
 
-        # Build YouTube description (Khmer + English together)
         yt_desc_parts = []
-
-        # Khmer first
         if title_kh:
             yt_desc_parts.append(title_kh)
         if desc_kh:
             yt_desc_parts.append(desc_kh)
-
-        # English
         if title:
             yt_desc_parts.append(title)
         if desc:
@@ -1334,13 +1295,13 @@ def post_all():
 
         youtube_description = "\n\n".join(yt_desc_parts)
 
-
-
         for platform in selected_platforms:
             if platform == "facebook":
                 continue
+
             try:
                 success = False
+
                 if platform == "website":
                     success = post_website(
                         title,
@@ -1353,13 +1314,11 @@ def post_all():
                 elif platform == "instagram":
                     ig_parts = []
 
-                    # Prefer English
                     if title:
                         ig_parts.append(title)
                     if desc:
                         ig_parts.append(desc)
 
-                    # Fallback to Khmer
                     if not ig_parts:
                         if title_kh:
                             ig_parts.append(title_kh)
@@ -1373,7 +1332,6 @@ def post_all():
                         continue
 
                     if not media_paths:
-                        print("❌ Instagram skipped: No media")
                         Failed.append("Instagram (No media)")
                         continue
 
@@ -1381,45 +1339,35 @@ def post_all():
 
                 elif platform == "youtube":
                     youtube_title = title or title_kh or "Video"
-
                     youtube_media = None
 
-                    # Prefer slideshow video
                     if slideshow_path and os.path.exists(slideshow_path):
                         youtube_media = slideshow_path
-
-                    # Otherwise accept ONLY real video files
                     elif media_paths:
                         ext = os.path.splitext(media_paths[0])[1].lower()
                         if ext in [".mp4", ".mov", ".mkv"]:
                             youtube_media = media_paths[0]
 
                     if not youtube_media:
-                        print("❌ YouTube skipped: No valid video")
                         Failed.append("YouTube (Video required)")
                         continue
-
-                    print("🎬 YT MEDIA:", youtube_media)
 
                     result = post_youtube(
                         youtube_title,
                         youtube_description,
                         youtube_media
                     )
+
                     if result:
                         Done.append("YouTube")
                     else:
                         Failed.append("YouTube")
                     continue
 
-
                 elif platform == "linkedin":
-                    ln_title = title or ""
-                    ln_desc = desc or ""
-
                     result = post_linkedin_org(
-                        ln_title,
-                        ln_desc,
+                        title or "",
+                        desc or "",
                         media_paths[:9]
                     )
 
@@ -1429,7 +1377,6 @@ def post_all():
                         Failed.append("LinkedIn")
                     continue
 
-                    
                 elif platform == "tiktok":
                     tiktok_media = None
 
@@ -1441,7 +1388,6 @@ def post_all():
                             tiktok_media = media_paths[0]
 
                     if not tiktok_media:
-                        print("❌ TikTok skipped: No valid video")
                         Failed.append("TikTok (Video required)")
                         continue
 
@@ -1464,59 +1410,54 @@ def post_all():
             except Exception as e:
                 print(f"❌ {platform} post failed:", e)
                 Failed.append(platform.capitalize())
-        
-        # --- Mark post as posted ---
-        post_obj.posted = True
-        db.session.commit()
+
         return Done, Failed
 
-    # --- Check if scheduled ---
+    # Scheduled post without DB
     if scheduled_time_str:
-        tz = pytz_timezone('Asia/Phnom_Penh')
+        tz = pytz_timezone("Asia/Phnom_Penh")
         naive = datetime.strptime(scheduled_time_str, "%Y-%m-%dT%H:%M")
         scheduled_time = tz.localize(naive)
 
-        scheduler.add_job(do_post, 'date', run_date=scheduled_time, args=[new_post.id])
+        scheduler.add_job(do_post, 'date', run_date=scheduled_time)
+
         return render_template_string("""
         <html>
         <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
         <body>
             <script>
-            {% raw %}
                 Swal.fire({
                     icon: 'success',
                     title: 'Scheduled!',
-                    html: '✅ Your post is scheduled for: {% endraw %}{{ scheduled_time }}{% raw %}',
+                    html: '✅ Your post is scheduled for: {{ scheduled_time }}',
                     confirmButtonColor: '#22c55e'
                 }).then(()=>{window.location.href='/'});
-            {% endraw %}
             </script>
         </body>
         </html>
         """, scheduled_time=scheduled_time.strftime("%Y-%m-%d %H:%M"))
 
-    
-    # Post immediately
-    Done, Failed = do_post(new_post.id)
+    # Direct post now
+    Done, Failed = do_post()
 
-    # --- Return results (fixed Jinja + JS) ---
     if Done:
         platforms_html = "<br>".join(Done)
         return render_template_string("""
         <!DOCTYPE html>
         <html lang="en">
-        <head><meta charset="UTF-8"><title>Posting Result</title>
-        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <head>
+            <meta charset="UTF-8">
+            <title>Posting Result</title>
+            <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+        </head>
         <body>
         <script>
-        {% raw %}
             Swal.fire({
                 icon: 'success',
                 title: 'Posted Successfully!',
-                html: '{% endraw %}{{ platforms_html|safe }}{% raw %}',
+                html: '{{ platforms_html|safe }}',
                 confirmButtonColor: '#28a745'
             }).then(() => { window.location.href = '/'; });
-        {% endraw %}
         </script>
         </body>
         </html>
@@ -1525,17 +1466,16 @@ def post_all():
     elif Failed:
         platforms_html = "<br>".join(Failed)
         return render_template_string("""
-        <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <html>
+        <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
         <body>
         <script>
-        {% raw %}
             Swal.fire({
                 icon: 'error',
                 title: 'Failed!',
-                html: '❌ Failed to post: {% endraw %}{{ platforms_html|safe }}{% raw %}',
+                html: '❌ Failed to post: {{ platforms_html|safe }}',
                 confirmButtonColor: '#dc3545'
             }).then(() => { window.location.href = '/'; });
-        {% endraw %}
         </script>
         </body>
         </html>
@@ -1543,22 +1483,20 @@ def post_all():
 
     else:
         return render_template_string("""
-        <html><head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
+        <html>
+        <head><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script></head>
         <body>
         <script>
-        {% raw %}
             Swal.fire({
                 icon: 'warning',
                 title: 'Nothing was posted',
                 text: 'All selected platforms failed or were skipped.',
                 confirmButtonColor: '#f39c12'
             }).then(() => { window.location.href = '/'; });
-        {% endraw %}
         </script>
         </body>
         </html>
         """)
-
     
 # ---------- Simple health route ----------
 @app.route("/status")
@@ -1576,29 +1514,7 @@ def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
-@app.route("/posts")
-@login_required
-def show_posts():
-    posts = Post.query.order_by(Post.created_at.desc()).all()  # latest first
-    return render_template("posts.html", posts=posts)
-
-
-@app.route("/api/posts/<int:post_id>")
-@login_required
-def post_detail_api(post_id):
-    post = Post.query.get_or_404(post_id)
-
-    return {
-        "title": post.title,
-        "description": post.description,
-        "created_at": post.created_at.strftime("%B %d, %Y"),
-        "images": post.images.split(",") if post.images else []
-    }
-
-
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     # Ensure LinkedIn env variables exist (warn but still run)
     if not SOCIAL_API['linkedin']['client_id'] or not SOCIAL_API['linkedin']['client_secret'] or not SOCIAL_API['linkedin']['organization_id']:
         print("WARNING: LinkedIn client_id, client_secret or organization_id not set in environment. Visit /linkedin/login will fail until set.")
